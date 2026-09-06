@@ -17,7 +17,9 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-MODEL = "gpt-5.6-sol"
+load_dotenv()
+
+MODEL = os.getenv("JUDGE_MODEL", "gpt-5.6-sol")
 
 RULES_PATH = Path("private/prompts/rules.md")
 PROFILE_PATH = Path("private/profile.md")
@@ -93,7 +95,6 @@ def load_profile() -> str:
 
 
 def make_client() -> OpenAI:
-    load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         sys.exit("找不到 OPENAI_API_KEY，請在 .env 加上這一行：OPENAI_API_KEY=sk-...")
