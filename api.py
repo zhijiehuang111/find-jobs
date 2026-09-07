@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
-from queries import Verdict
+from queries import Label, Sort, Verdict
 
 
 def conninfo() -> str:
@@ -61,7 +61,8 @@ Db = Annotated[Connection, Depends(get_conn)]
 
 
 class LabelBody(BaseModel):
-    human_label: bool | None
+    human_label: Label | None
+    human_note: str | None = None
 
 
 class StarBody(BaseModel):
@@ -71,11 +72,20 @@ class StarBody(BaseModel):
 @app.get("/api/jobs")
 def list_jobs(
     conn: Db,
-    verdict: Verdict = "fit",
+    verdict: Verdict | None = None,
+    starred: bool | None = None,
+    labeled: bool | None = None,
+    sort: Sort = "first_seen",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[dict]:
-    return queries.list_jobs(conn, verdict, limit, offset)
+    """都不給就是全部：
+    收件匣    ?verdict=fit&labeled=false
+    收藏      ?starred=true&sort=starred
+    不適合    ?verdict=unfit
+    規則刷掉  ?verdict=filtered
+    """
+    return queries.list_jobs(conn, verdict, starred, labeled, sort, limit, offset)
 
 
 @app.get("/api/stats")
@@ -91,7 +101,8 @@ def _found(row: dict | None, slug: str) -> dict:
 
 @app.post("/api/jobs/{slug}/label")
 def set_label(conn: Db, slug: str, body: LabelBody) -> dict:
-    return _found(queries.set_label(conn, slug, body.human_label), slug)
+    row = queries.set_label(conn, slug, body.human_label, body.human_note)
+    return _found(row, slug)
 
 
 @app.post("/api/jobs/{slug}/star")

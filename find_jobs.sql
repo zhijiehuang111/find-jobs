@@ -10,8 +10,10 @@ CREATE TABLE
         prompt_sha256 TEXT,
         profile_sha256 TEXT,
         model TEXT,
-        human_label BOOLEAN,
+        human_label TEXT,
+        human_note TEXT,
         starred BOOLEAN NOT NULL DEFAULT FALSE,
+        starred_at TIMESTAMPTZ,
         first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now (),
         judged_at TIMESTAMPTZ,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now (),
@@ -31,6 +33,9 @@ CREATE TABLE
         CONSTRAINT list_rejected_has_no_detail CHECK (
             status <> 'list_rejected'
             OR raw_detail IS NULL
+        ),
+        CONSTRAINT human_label_vocabulary CHECK (
+            human_label IN ('yes', 'no', 'unsure')
         )
     );
 
