@@ -59,7 +59,9 @@ COUNT = sql.SQL("""
         count(*) FILTER (WHERE {fit})      AS fit,
         count(*) FILTER (WHERE {unfit})    AS unfit,
         count(*) FILTER (WHERE {filtered}) AS filtered,
-        count(*) FILTER (WHERE {fit} AND human_label IS NULL) AS inbox,
+        count(*) FILTER (WHERE {fit} AND human_label IS NULL)      AS inbox,
+        count(*) FILTER (WHERE {unfit} AND human_label IS NULL)    AS unfit_open,
+        count(*) FILTER (WHERE {filtered} AND human_label IS NULL) AS filtered_open,
         count(*) FILTER (WHERE starred)    AS starred
     FROM jobs
 """)
@@ -67,8 +69,12 @@ COUNT = sql.SQL("""
 LABEL = sql.SQL("""
     UPDATE jobs SET
         human_label = %(label)s,
-        human_note  = CASE WHEN %(label)s::text IS NULL THEN NULL
-                           ELSE coalesce(%(note)s, human_note) END,
+        human_note  = CASE
+            WHEN %(label)s::text IS NULL                     THEN NULL
+            WHEN %(label)s::text = 'yes' AND fit             THEN NULL
+            WHEN %(label)s::text = 'no'  AND fit IS NOT TRUE THEN NULL
+            ELSE %(note)s
+        END,
         updated_at  = now()
     WHERE slug = %(slug)s
     RETURNING {columns}
