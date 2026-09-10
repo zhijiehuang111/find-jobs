@@ -72,7 +72,7 @@ export const TABS: Tab[] = [
     stat: 'starred',
     empty: {
       line: '還沒有收藏。',
-      hint: '在收件匣按 ☆ 把想投的職缺留在這裡。',
+      hint: '標 Y（或在還沒標的職缺上按 ☆）會收藏到這裡，投完再取消。',
     },
   },
   {

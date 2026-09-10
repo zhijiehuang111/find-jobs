@@ -153,6 +153,15 @@ export default function App() {
     void commit(job, label, '')
   }
 
+  /**
+   * 還沒標的按 ☆ = 標 Y，走同一條路（分歧一樣要理由，收藏由 LABEL 帶上）。
+   * 標過的才是單純的 toggle —— 投完取消收藏，Y 留著。
+   */
+  function onStar(job: Job) {
+    if (job.human_label === null) onLabel(job, 'yes')
+    else void write(job.slug, () => setStar(job.slug, !job.starred))
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-[1080px] px-3 sm:px-5">
       <header className="sticky top-0 z-10 bg-white">
@@ -238,7 +247,7 @@ export default function App() {
                   onLabel={(label) => onLabel(job, label)}
                   onSubmit={() => pending && commit(job, pending.label, note)}
                   onCancel={cancel}
-                  onStar={() => void write(job.slug, () => setStar(job.slug, !job.starred))}
+                  onStar={() => onStar(job)}
                 />
               ))}
             </ul>

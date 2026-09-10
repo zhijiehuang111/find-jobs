@@ -75,6 +75,18 @@ LABEL = sql.SQL("""
             WHEN %(label)s::text = 'no'  AND fit IS NOT TRUE THEN NULL
             ELSE %(note)s
         END,
+        starred     = CASE
+            WHEN %(label)s::text = 'yes' THEN TRUE
+            WHEN human_label = 'yes'
+             AND (%(label)s::text = 'no' OR %(label)s::text IS NULL) THEN FALSE
+            ELSE starred
+        END,
+        starred_at  = CASE
+            WHEN %(label)s::text = 'yes' THEN coalesce(starred_at, now())
+            WHEN human_label = 'yes'
+             AND (%(label)s::text = 'no' OR %(label)s::text IS NULL) THEN NULL
+            ELSE starred_at
+        END,
         updated_at  = now()
     WHERE slug = %(slug)s
     RETURNING {columns}
