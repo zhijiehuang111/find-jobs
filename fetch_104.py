@@ -27,6 +27,9 @@ ORDER_LATEST = "16"
 # 台北市 / 新北市 / 桃園市 / 新竹市
 AREAS = "6001001000,6001002000,6001005000,6001006000"
 
+# 軟體／工程類 + MIS／網管類
+JOBCAT = "2007001000,2007002000"
+
 SLEEP_SECONDS = 1.5  # 每次請求之間的間隔，別打太快
 MAX_RETRIES = 3
 
@@ -54,12 +57,15 @@ def get(url: str, params: dict | None = None, label: str = "") -> dict:
     raise RuntimeError("unreachable")
 
 
-def search(keyword: str, page: int = 1, pagesize: int = 20) -> dict:
+def search(
+    keyword: str, order: str = ORDER_LATEST, page: int = 1, pagesize: int = 20
+) -> dict:
     """搜尋列表。只拿來取得職缺網址，內容不存。"""
     params = {
         "keyword": keyword,
-        "order": ORDER_LATEST,
+        "order": order,
         "area": AREAS,
+        "jobcat": JOBCAT,
         "page": page,
         "pagesize": pagesize,
     }

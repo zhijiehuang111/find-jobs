@@ -7,7 +7,7 @@ export TZ=Asia/Taipei
 
 UV="$HOME/.local/bin/uv"
 KEYWORDS=(backend full-stack "software engineer" "ai engineer")
-PAGES=4
+PAGES=2
 
 if [[ ! -x "$UV" ]]; then
     echo "找不到 uv（$UV）—— cron 的 PATH 是空的，這裡要絕對路徑" >&2
@@ -21,7 +21,7 @@ LOG="logs/$(date +%Y%m%d).log"
     echo "########## $(date '+%F %T') 開始 ##########"
     for kw in "${KEYWORDS[@]}"; do
         echo
-        echo "===== $kw（$PAGES 頁）====="
+        echo "===== $kw（相關度、最近更新各 $PAGES 頁）====="
         "$UV" run pipeline.py "$kw" "$PAGES"
     done
     echo

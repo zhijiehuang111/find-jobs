@@ -51,7 +51,7 @@ export function fmtAddress(raw: string | null): string {
   return head + area || s;
 }
 
-/** rejected_by 的三個值來自 pipeline.py 的 list_reject_reason()。 */
+/** salary_* 來自 pipeline.py 的 _salary_reject()；job_name_blocklist 只剩舊資料（職稱擋掉的現在不寫 DB）。 */
 const REJECTED: Record<string, string> = {
   job_name_blocklist: "職稱在黑名單裡",
   salary_monthly: "月薪級距上限低於門檻",

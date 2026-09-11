@@ -1,10 +1,10 @@
 """
-list -> 去重 -> list 過濾 -> detail -> LLM -> DB
+list -> 去重 -> 職稱過濾（不寫 DB）-> 薪資過濾 -> detail -> LLM -> DB
 
 用法：
-    uv run pipeline.py                  # backend，1 頁
+    uv run pipeline.py                  # backend，相關度、最近更新各 1 頁
     uv run pipeline.py python           # 換關鍵字
-    uv run pipeline.py python 3         # 逛 3 頁列表
+    uv run pipeline.py python 3         # 兩種排序各逛 3 頁
     uv run pipeline.py python 3 --force # 連已經判過的也重判（改了 prompt 之後用）
 """
 
@@ -17,12 +17,26 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.types.json import Jsonb
 
-from fetch_104 import DROP_FIELDS, SLEEP_SECONDS, fetch_detail, search
+from fetch_104 import (
+    DROP_FIELDS,
+    ORDER_LATEST,
+    ORDER_RELEVANCE,
+    SLEEP_SECONDS,
+    fetch_detail,
+    search,
+)
 from judge import MODEL, judge, load_profile, load_rules, make_client, sha16
-from private.filters import JOB_NAME_BLOCKLIST, SALARY_FLOORS
+from private.filters import (
+    JOB_NAME_ENG_GUARD,
+    JOB_NAME_HARD_BLOCK,
+    JOB_NAME_NON_ENG,
+    SALARY_FLOORS,
+)
 
 ANNUAL_SPLIT = 300_000
 UNBOUNDED = 9_999_999
+
+ORDERS = {"相關度": ORDER_RELEVANCE, "最近更新": ORDER_LATEST}
 
 
 def _salary_reject(item: dict) -> str | None:
@@ -38,11 +52,14 @@ def _salary_reject(item: dict) -> str | None:
     return f"salary_{unit}" if gate < SALARY_FLOORS[unit] else None
 
 
-def list_reject_reason(item: dict) -> str | None:
-    """看 list 欄位決定要不要在這裡就刷掉。回傳 rejected_by，通過就回 None。"""
-    if JOB_NAME_BLOCKLIST.search(item.get("jobName", "")):
+def title_reject_reason(item: dict) -> str | None:
+    """職稱一看就不會投的。**不寫 DB** —— 每天重比一次正則，不花 detail 和 LLM；誤殺只看得到 log。"""
+    name = item.get("jobName", "")
+    if JOB_NAME_HARD_BLOCK.search(name):
         return "job_name_blocklist"
-    return _salary_reject(item)
+    if JOB_NAME_NON_ENG.search(name) and not JOB_NAME_ENG_GUARD.search(name):
+        return "job_name_non_eng"
+    return None
 
 
 UPSERT = """
@@ -83,23 +100,27 @@ def connect() -> psycopg.Connection:
 
 
 def collect_list(keyword: str, pages: int) -> dict[str, dict]:
-    """逛列表，回傳 {slug: 整筆 list item}。"""
+    """每種排序各逛 pages 頁，回傳 {slug: 整筆 list item}。"""
     items: dict[str, dict] = {}
-    for page in range(1, pages + 1):
-        if page > 1:
-            time.sleep(SLEEP_SECONDS)
-        payload = search(keyword, page=page)
-        for job in payload["data"]:
-            slug = job["link"]["job"].rsplit("/", 1)[-1]
-            items.setdefault(slug, job)
+    first = True
+    for label, order in ORDERS.items():
+        for page in range(1, pages + 1):
+            if not first:
+                time.sleep(SLEEP_SECONDS)
+            first = False
+            payload = search(keyword, order=order, page=page)
+            for job in payload["data"]:
+                slug = job["link"]["job"].rsplit("/", 1)[-1]
+                items.setdefault(slug, job)
 
-        pagination = payload["metadata"]["pagination"]
-        print(
-            f"第 {page}/{pages} 頁：{pagination['count']} 筆（累計去重後 {len(items)}）"
-        )
-        if page >= pagination["lastPage"]:
-            print("    已經是最後一頁")
-            break
+            pagination = payload["metadata"]["pagination"]
+            print(
+                f"{label} 第 {page}/{pages} 頁：{pagination['count']} 筆"
+                f"（累計去重後 {len(items)}）"
+            )
+            if page >= pagination["lastPage"]:
+                print("    已經是最後一頁")
+                break
     return items
 
 
@@ -198,15 +219,22 @@ def main() -> None:
             print("    （--force：略過去重，已判過的會被覆蓋）")
 
         todo: dict[str, dict] = {}
+        title_skipped = list_rejected = 0
         for slug, item in fresh.items():
-            rejected_by = list_reject_reason(item)
-            if rejected_by is None:
-                todo[slug] = item
+            if rejected_by := title_reject_reason(item):
+                title_skipped += 1
+                print(f"    - {item['jobName']}（{rejected_by}，不寫 DB）")
                 continue
-            save_list_rejected(conn, slug, item, rejected_by)
-            print(f"    x {item['jobName']}（{rejected_by}）")
-        list_rejected = len(fresh) - len(todo)
-        print(f"list 過濾刷掉 {list_rejected} 筆，要抓 detail {len(todo)} 筆")
+            if rejected_by := _salary_reject(item):
+                list_rejected += 1
+                save_list_rejected(conn, slug, item, rejected_by)
+                print(f"    x {item['jobName']}（{rejected_by}）")
+                continue
+            todo[slug] = item
+        print(
+            f"職稱擋掉 {title_skipped} 筆（不寫 DB），薪資刷掉 {list_rejected} 筆，"
+            f"要抓 detail {len(todo)} 筆"
+        )
 
         if not todo:
             summarise(conn)
@@ -249,7 +277,7 @@ def main() -> None:
         print(
             f"\n這次寫入 {list_rejected + len(todo) - failed} 筆"
             f"（判斷 {len(todo) - failed} 筆，其中適合 {fit_count} 筆；"
-            f"list 刷掉 {list_rejected} 筆）"
+            f"薪資刷掉 {list_rejected} 筆）"
             + (f"，失敗 {failed} 筆沒寫入" if failed else "")
         )
         summarise(conn)
