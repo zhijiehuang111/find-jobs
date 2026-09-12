@@ -27,6 +27,7 @@ from fetch_104 import (
 )
 from judge import MODEL, judge, load_profile, load_rules, make_client, sha16
 from private.filters import (
+    COMPANY_BLOCK,
     JOB_NAME_ENG_GUARD,
     JOB_NAME_HARD_BLOCK,
     JOB_NAME_NON_ENG,
@@ -53,7 +54,9 @@ def _salary_reject(item: dict) -> str | None:
 
 
 def title_reject_reason(item: dict) -> str | None:
-    """職稱一看就不會投的。**不寫 DB** —— 每天重比一次正則，不花 detail 和 LLM；誤殺只看得到 log。"""
+    """職稱／公司一看就不會投的。**不寫 DB** —— 每天重比一次正則，不花 detail 和 LLM；誤殺只看得到 log。"""
+    if COMPANY_BLOCK.search(item.get("custName", "")):
+        return "company_blocklist"
     name = item.get("jobName", "")
     if JOB_NAME_HARD_BLOCK.search(name):
         return "job_name_blocklist"
