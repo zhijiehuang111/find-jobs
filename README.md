@@ -29,7 +29,7 @@ flowchart TB
 
 ## Tech Stack
 
-Python｜FastAPI + psycopg｜Postgres 18
+Python｜FastAPI + psycopg｜Postgres 18  
 React + TypeScript + Tailwind｜OpenAI Responses API
 
 跑在自己的 VPS：Docker Postgres、cron、systemd + nginx basic auth + TLS
