@@ -5,7 +5,8 @@ list -> 去重 -> 職稱過濾（不寫 DB）-> 薪資過濾 -> detail -> LLM ->
     uv run pipeline.py                  # backend，相關度、最近更新各 1 頁
     uv run pipeline.py python           # 換關鍵字
     uv run pipeline.py python 3         # 兩種排序各逛 3 頁
-    uv run pipeline.py python 3 --force # 連已經判過的也重判（改了 prompt 之後用）
+
+改了 prompt / profile 之後要重判收件匣：用 rejudge.py。
 """
 
 import os
@@ -205,8 +206,7 @@ def summarise(conn: psycopg.Connection) -> None:
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if a != "--force"]
-    force = "--force" in sys.argv[1:]
+    args = sys.argv[1:]
     keyword = args[0] if args else "backend"
     pages = int(args[1]) if len(args) > 1 else 1
 
@@ -215,11 +215,9 @@ def main() -> None:
         if not items:
             sys.exit("列表沒抓到東西。")
 
-        seen = set() if force else already_seen(conn, list(items))
+        seen = already_seen(conn, list(items))
         fresh = {slug: item for slug, item in items.items() if slug not in seen}
         print(f"\n列表 {len(items)} 筆，跳過已處理 {len(seen)} 筆")
-        if force:
-            print("    （--force：略過去重，已判過的會被覆蓋）")
 
         todo: dict[str, dict] = {}
         title_skipped = list_rejected = 0
