@@ -25,6 +25,7 @@ flowchart TB
   ui -->|human_label + 理由| db
   db -. 挑題 .-> exam[固定考卷約 70 題]
   exam -. 離線跑同一套 judge, 不寫 DB .-> eval["eval: accuracy / precision / recall"]
+  eval -. 新版 OK, 手動跑 .-> rejudge["rejudge.py<br/>讀 raw_detail 重判還沒標的, 不打 104 API"] -.-> db
 ```
 
 ## Tech Stack
