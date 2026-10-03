@@ -6,7 +6,7 @@ cd "$(dirname "$0")" || exit 1
 export TZ=Asia/Taipei
 
 UV="$HOME/.local/bin/uv"
-KEYWORDS=(backend full-stack "software engineer" "ai engineer")
+KEYWORDS=(backend full-stack "software engineer")
 PAGES=2
 
 if [[ ! -x "$UV" ]]; then

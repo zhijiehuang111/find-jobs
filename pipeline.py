@@ -32,6 +32,8 @@ from private.filters import (
     JOB_NAME_ENG_GUARD,
     JOB_NAME_HARD_BLOCK,
     JOB_NAME_NON_ENG,
+    JOB_NAME_UNWANTED_LANG,
+    JOB_NAME_WANTED_LANG,
     SALARY_FLOORS,
 )
 
@@ -63,6 +65,8 @@ def title_reject_reason(item: dict) -> str | None:
         return "job_name_blocklist"
     if JOB_NAME_NON_ENG.search(name) and not JOB_NAME_ENG_GUARD.search(name):
         return "job_name_non_eng"
+    if JOB_NAME_UNWANTED_LANG.search(name) and not JOB_NAME_WANTED_LANG.search(name):
+        return "job_name_lang"
     return None
 
 

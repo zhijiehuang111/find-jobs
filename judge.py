@@ -24,6 +24,8 @@ MODEL = os.getenv("JUDGE_MODEL", "gpt-5.6-sol")
 RULES_PATH = Path("private/prompts/rules.md")
 PROFILE_PATH = Path("private/profile.md")
 
+SHIFT_TAGS = {1: "需輪班", 2: "彈性排班", 3: "一頭班"}
+
 
 class Judgement(BaseModel):
     """LLM 的輸出格式。"""
@@ -69,6 +71,12 @@ def jd_to_text(detail: dict) -> str:
         ("職務類別", _join(jd["jobCategory"])),
         ("管理責任", jd["manageResp"]),
         ("出差", jd["businessTrip"]),
+        (
+            "排班說明",
+            "、".join(
+                SHIFT_TAGS.get(t, str(t)) for t in jd.get("workPeriodTags") or []
+            ),
+        ),
         (
             "委託招募",
             f"由人力業者代為招募（{jd['delegatedRecruit']}）"
