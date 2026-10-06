@@ -21,3 +21,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff.lint.isort]
+# private/ 是另一個 repo，CI 上不存在；不寫的話 ruff 在 CI 會把它當第三方套件，import 排序結果跟本機不同
+known-first-party = ["private"]
