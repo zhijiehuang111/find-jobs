@@ -140,7 +140,7 @@ def run(items: list[Item], client, rules: str, profile: str) -> None:
     def one(item: Item) -> None:
         try:
             result = judge(item.record["detail"], client, rules, profile)
-        except Exception as err:  # 網路、rate limit、content filter 都算在內
+        except Exception as err:  # noqa: BLE001  網路、rate limit、content filter 都算在內
             item.error = f"{type(err).__name__}: {err}"
             return
         item.fit, item.reason = result.fit, result.reason

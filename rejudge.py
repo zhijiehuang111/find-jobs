@@ -13,7 +13,6 @@ import sys
 
 import httpx
 import openai
-import psycopg
 
 from judge import MODEL, judge, load_profile, load_rules, make_client, sha16
 from pipeline import connect
