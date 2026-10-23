@@ -46,6 +46,7 @@ cd frontend && npm run lint && npm run build                           # 前端 
   改完記得 push `private/`，不然 VPS 部署 pull 到的是舊的。
 - **換考卷**（加題、改答案）：先用當前版本重跑一次 eval 當新基準線，分數只有 dataset hash 相同才能比。
 - **改 schema**：`find_jobs.sql` 和新的 `migrations/00N_*.sql` 都要改。只動資料的 migration 不用改 `find_jobs.sql`。
+- **main 不能直接 push**：任何改動都先開 branch，走 PR merge（merge 進 main 就會自動部署）。
 - PR 標題用 `feat:` / `fix:` / `ci:` / `chore:`，squash 後會變成 commit 訊息。
 
 ## 部署
