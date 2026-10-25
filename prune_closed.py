@@ -56,7 +56,7 @@ def main() -> None:
 
         print(
             f"\n關掉 {len(closed)} 筆"
-            + (f"，查不到 {skipped} 筆沒動" if skipped else "")
+            + (f"，{skipped} 筆無法確認，先保留" if skipped else "")
         )
         if not closed:
             return

@@ -25,6 +25,9 @@ LOG="logs/$(date +%Y%m%d).log"
         "$UV" run pipeline.py "$kw" "$PAGES"
     done
     echo
+    echo "===== 清掉已下架 ====="
+    "$UV" run prune_closed.py --apply
+    echo
     echo "########## $(date '+%F %T') 結束 ##########"
 } >> "$LOG" 2>&1
 
