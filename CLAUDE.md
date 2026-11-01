@@ -27,6 +27,7 @@ CI 上沒有它，所以測試不能 import `private`。
 
 ```bash
 docker compose up -d                 # 起 Postgres（.env 要有 POSTGRES_*）
+docker compose up -d postgres-test   # 測試用 DB（:55432，資料在記憶體），pytest 要它
 uv run fastapi dev api.py            # API，http://127.0.0.1:8000/docs
 cd frontend && npm run dev           # 前端
 uv run ruff check . && uv run ruff format --check . && uv run pytest   # 跟 CI 一樣
@@ -46,6 +47,7 @@ cd frontend && npm run lint && npm run build                           # 前端 
   改完記得 push `private/`，不然 VPS 部署 pull 到的是舊的。
 - **換考卷**（加題、改答案）：先用當前版本重跑一次 eval 當新基準線，分數只有 dataset hash 相同才能比。
 - **改 schema**：`find_jobs.sql` 和新的 `migrations/00N_*.sql` 都要改。只動資料的 migration 不用改 `find_jobs.sql`。
+- **改 API / SQL**：`tests/test_api.py` 打真的 Postgres，不要 mock `queries`。連線寫死在 `tests/conftest.py`、不讀 `.env`，別改成讀 `.env`，測試會 `TRUNCATE jobs`。
 - **main 不能直接 push**：任何改動都先開 branch，走 PR merge（merge 進 main 就會自動部署）。
 - PR 標題用 `feat:` / `fix:` / `ci:` / `chore:`，squash 後會變成 commit 訊息。
 
