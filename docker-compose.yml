@@ -12,5 +12,19 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
 
+  # pytest 專用，資料放記憶體、不碰上面那個 DB。profile 讓 `docker compose up -d` 不會順便起它
+  postgres-test:
+    image: postgres:18
+    profiles: [test]
+    container_name: postgres_find_jobs_test
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: find_jobs_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+
 volumes:
   pgdata:
