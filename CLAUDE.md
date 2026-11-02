@@ -21,7 +21,7 @@
 
 `private/` 是另一個 repo（find-jobs-private），gitignore 掉了：
 `prompts/rules.md`、`profile.md`、`filters.py`（黑名單、薪資門檻）、`labels.tsv`、`dataset.jsonl`、`evals/`。
-CI 上沒有它，所以測試不能 import `private`。
+CI 上沒有它，所以測試不能 import `private`。測試要用規則或門檻時，自己編一看就是假的值，不要照抄 `private/` 的真實設定（這個 repo 是公開的）。
 
 ## 常用指令
 
@@ -31,6 +31,7 @@ docker compose up -d postgres-test   # 測試用 DB（:55432，資料在記憶�
 uv run fastapi dev api.py            # API，http://127.0.0.1:8000/docs
 cd frontend && npm run dev           # 前端
 uv run ruff check . && uv run ruff format --check . && uv run pytest   # 跟 CI 一樣
+uvx pyright --pythonpath .venv/bin/python *.py tests                   # 型別檢查，跟 VS Code 的 Pylance 同引擎
 cd frontend && npm run lint && npm run build                           # 前端 CI
 ```
 
@@ -43,6 +44,7 @@ cd frontend && npm run lint && npm run build                           # 前端 
 
 ## 改東西時的約定
 
+- **改 Python**：改完跑 ruff 和 pyright，兩個都要 0 error。pyright 不在 CI 裡，要自己跑。
 - **改 prompt / profile**：先跑 `eval.py` 確認分數，OK 了再跑 `rejudge.py`。
   改完記得 push `private/`，不然 VPS 部署 pull 到的是舊的。
 - **換考卷**（加題、改答案）：先用當前版本重跑一次 eval 當新基準線，分數只有 dataset hash 相同才能比。
