@@ -9,35 +9,18 @@
 basic auth。要跟 Postgres 一樣只綁 127.0.0.1，得自己指定 --host。
 """
 
-import os
-import sys
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from psycopg import Connection
-from psycopg.conninfo import make_conninfo
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
+from db import conninfo
 from queries import Label, Sort, Verdict
-
-
-def conninfo() -> str:
-    load_dotenv()
-    try:
-        return make_conninfo(
-            host="127.0.0.1",
-            port=os.environ["POSTGRES_PORT"],
-            user=os.environ["POSTGRES_USER"],
-            password=os.environ["POSTGRES_PASSWORD"],
-            dbname=os.environ["POSTGRES_DB"],
-        )
-    except KeyError as err:
-        sys.exit(f".env 少了 {err.args[0]}，docker-compose.yml 要的那四個都得有。")
 
 
 @asynccontextmanager
