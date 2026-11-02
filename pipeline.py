@@ -9,16 +9,15 @@ list -> 去重 -> 職稱過濾（不寫 DB）-> 薪資過濾 -> detail -> LLM ->
 改了 prompt / profile 之後要重判收件匣：用 rejudge.py。
 """
 
-import os
 import sys
 import time
 from typing import Any
 
 import httpx
 import psycopg
-from dotenv import load_dotenv
 from psycopg.types.json import Jsonb
 
+from db import conninfo
 from fetch_104 import (
     DROP_FIELDS,
     ORDER_LATEST,
@@ -91,17 +90,8 @@ UPSERT = """
 
 
 def connect() -> psycopg.Connection:
-    load_dotenv()
     try:
-        return psycopg.connect(
-            host="127.0.0.1",
-            port=os.environ["POSTGRES_PORT"],
-            user=os.environ["POSTGRES_USER"],
-            password=os.environ["POSTGRES_PASSWORD"],
-            dbname=os.environ["POSTGRES_DB"],
-        )
-    except KeyError as err:
-        sys.exit(f".env 少了 {err.args[0]}，docker-compose.yml 要的那四個都得有。")
+        return psycopg.connect(conninfo())
     except psycopg.OperationalError as err:
         sys.exit(f"連不上 Postgres（{err}）\n  DB 沒起來的話：docker compose up -d")
 

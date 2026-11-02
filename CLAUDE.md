@@ -15,6 +15,7 @@
 | `prune_closed.py` | 收件匣裡已下架的職缺刪掉 |
 | `build_dataset.py` / `eval.py` | 考卷（`labels.tsv` → `dataset.jsonl`）和評分 |
 | `api.py` + `queries.py` | FastAPI；SQL 全部在 `queries.py`，回傳一律 dict |
+| `db.py` | `.env` → 連線字串，`api.py`（pool）和 `pipeline.connect()`（單條）共用 |
 | `frontend/` | React + TS + Tailwind，dev 時 `/api` proxy 到 :8000 |
 | `find_jobs.sql` | 完整的最新 schema（新建 DB 用） |
 | `migrations/` | 已上線 DB 的變更，`00N_描述.sql` |
