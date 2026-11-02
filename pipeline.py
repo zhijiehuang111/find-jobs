@@ -12,6 +12,7 @@ list -> 去重 -> 職稱過濾（不寫 DB）-> 薪資過濾 -> detail -> LLM ->
 import os
 import sys
 import time
+from typing import Any
 
 import httpx
 import psycopg
@@ -27,15 +28,6 @@ from fetch_104 import (
     search,
 )
 from judge import MODEL, judge, load_profile, load_rules, make_client, sha16
-from private.filters import (
-    COMPANY_BLOCK,
-    JOB_NAME_ENG_GUARD,
-    JOB_NAME_HARD_BLOCK,
-    JOB_NAME_NON_ENG,
-    JOB_NAME_UNWANTED_LANG,
-    JOB_NAME_WANTED_LANG,
-    SALARY_FLOORS,
-)
 
 ANNUAL_SPLIT = 300_000
 UNBOUNDED = 9_999_999
@@ -43,7 +35,7 @@ UNBOUNDED = 9_999_999
 ORDERS = {"相關度": ORDER_RELEVANCE, "最近更新": ORDER_LATEST}
 
 
-def _salary_reject(item: dict) -> str | None:
+def _salary_reject(item: dict, floors: dict[str, int]) -> str | None:
     """拿**級距上限**當閘門：只要摸得到門檻就放行，即使下限很低。"""
     low = item.get("salaryLow") or 0
     high = item.get("salaryHigh") or 0
@@ -53,19 +45,26 @@ def _salary_reject(item: dict) -> str | None:
     unit = "annual" if low >= ANNUAL_SPLIT else "monthly"
 
     gate = low if high >= UNBOUNDED else high
-    return f"salary_{unit}" if gate < SALARY_FLOORS[unit] else None
+    return f"salary_{unit}" if gate < floors[unit] else None
 
 
-def title_reject_reason(item: dict) -> str | None:
-    """職稱／公司一看就不會投的。**不寫 DB** —— 每天重比一次正則，不花 detail 和 LLM；誤殺只看得到 log。"""
-    if COMPANY_BLOCK.search(item.get("custName", "")):
+def title_reject_reason(item: dict, filters: Any) -> str | None:
+    """職稱／公司一看就不會投的。**不寫 DB** —— 每天重比一次正則，不花 detail 和 LLM；誤殺只看得到 log。
+
+    filters = private.filters，測試傳同樣常數名的假規則。
+    """
+    if filters.COMPANY_BLOCK.search(item.get("custName", "")):
         return "company_blocklist"
     name = item.get("jobName", "")
-    if JOB_NAME_HARD_BLOCK.search(name):
+    if filters.JOB_NAME_HARD_BLOCK.search(name):
         return "job_name_blocklist"
-    if JOB_NAME_NON_ENG.search(name) and not JOB_NAME_ENG_GUARD.search(name):
+    if filters.JOB_NAME_NON_ENG.search(name) and not filters.JOB_NAME_ENG_GUARD.search(
+        name
+    ):
         return "job_name_non_eng"
-    if JOB_NAME_UNWANTED_LANG.search(name) and not JOB_NAME_WANTED_LANG.search(name):
+    if filters.JOB_NAME_UNWANTED_LANG.search(
+        name
+    ) and not filters.JOB_NAME_WANTED_LANG.search(name):
         return "job_name_lang"
     return None
 
@@ -209,83 +208,89 @@ def summarise(conn: psycopg.Connection) -> None:
         print(f"          list 階段刷掉 {sum(c for _, c in rejected)} 筆（{detail}）")
 
 
+def run(conn: psycopg.Connection, keyword: str, pages: int, filters: Any) -> None:
+    items = collect_list(keyword, pages)
+    if not items:
+        sys.exit("列表沒抓到東西。")
+
+    seen = already_seen(conn, list(items))
+    fresh = {slug: item for slug, item in items.items() if slug not in seen}
+    print(f"\n列表 {len(items)} 筆，跳過已處理 {len(seen)} 筆")
+
+    todo: dict[str, dict] = {}
+    title_skipped = list_rejected = 0
+    for slug, item in fresh.items():
+        if rejected_by := title_reject_reason(item, filters):
+            title_skipped += 1
+            print(f"    - {item['jobName']}（{rejected_by}，不寫 DB）")
+            continue
+        if rejected_by := _salary_reject(item, filters.SALARY_FLOORS):
+            list_rejected += 1
+            save_list_rejected(conn, slug, item, rejected_by)
+            print(f"    x {item['jobName']}（{rejected_by}）")
+            continue
+        todo[slug] = item
+    print(
+        f"職稱擋掉 {title_skipped} 筆（不寫 DB），薪資刷掉 {list_rejected} 筆，"
+        f"要抓 detail {len(todo)} 筆"
+    )
+
+    if not todo:
+        summarise(conn)
+        return
+
+    client = make_client()
+    rules, profile = load_rules(), load_profile()
+    hashes = {"prompt_sha256": sha16(rules), "profile_sha256": sha16(profile)}
+
+    print(
+        f"model={MODEL}"
+        f" prompt={hashes['prompt_sha256'][:8]}"
+        f" profile={hashes['profile_sha256'][:8]}\n"
+    )
+
+    fit_count = failed = 0
+    for i, (slug, item) in enumerate(todo.items(), 1):
+        time.sleep(SLEEP_SECONDS)
+        try:
+            data = fetch_detail(slug)["data"]
+            detail = {k: v for k, v in data.items() if k not in DROP_FIELDS}
+            verdict = judge(detail, client, rules, profile)
+        except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as err:
+            print(
+                f"{i:3}/{len(todo)} ✗ {item['jobName']}（{type(err).__name__}: {err}）"
+            )
+            failed += 1
+            continue
+
+        save_judged(conn, slug, item, detail, verdict, hashes)
+        fit_count += verdict.fit
+        mark = "✅" if verdict.fit else "❌"
+        print(
+            f"{i:3}/{len(todo)} {mark} {detail['header']['jobName']}（{detail['header']['custName']}）"
+        )
+        print(f"        {verdict.reason}")
+        if verdict.fit:
+            print(f"        https://www.104.com.tw/job/{slug}")
+
+    print(
+        f"\n這次寫入 {list_rejected + len(todo) - failed} 筆"
+        f"（判斷 {len(todo) - failed} 筆，其中適合 {fit_count} 筆；"
+        f"薪資刷掉 {list_rejected} 筆）"
+        + (f"，失敗 {failed} 筆沒寫入" if failed else "")
+    )
+    summarise(conn)
+
+
 def main() -> None:
+    from private import filters
+
     args = sys.argv[1:]
     keyword = args[0] if args else "backend"
     pages = int(args[1]) if len(args) > 1 else 1
 
     with connect() as conn:
-        items = collect_list(keyword, pages)
-        if not items:
-            sys.exit("列表沒抓到東西。")
-
-        seen = already_seen(conn, list(items))
-        fresh = {slug: item for slug, item in items.items() if slug not in seen}
-        print(f"\n列表 {len(items)} 筆，跳過已處理 {len(seen)} 筆")
-
-        todo: dict[str, dict] = {}
-        title_skipped = list_rejected = 0
-        for slug, item in fresh.items():
-            if rejected_by := title_reject_reason(item):
-                title_skipped += 1
-                print(f"    - {item['jobName']}（{rejected_by}，不寫 DB）")
-                continue
-            if rejected_by := _salary_reject(item):
-                list_rejected += 1
-                save_list_rejected(conn, slug, item, rejected_by)
-                print(f"    x {item['jobName']}（{rejected_by}）")
-                continue
-            todo[slug] = item
-        print(
-            f"職稱擋掉 {title_skipped} 筆（不寫 DB），薪資刷掉 {list_rejected} 筆，"
-            f"要抓 detail {len(todo)} 筆"
-        )
-
-        if not todo:
-            summarise(conn)
-            return
-
-        client = make_client()
-        rules, profile = load_rules(), load_profile()
-        hashes = {"prompt_sha256": sha16(rules), "profile_sha256": sha16(profile)}
-
-        print(
-            f"model={MODEL}"
-            f" prompt={hashes['prompt_sha256'][:8]}"
-            f" profile={hashes['profile_sha256'][:8]}\n"
-        )
-
-        fit_count = failed = 0
-        for i, (slug, item) in enumerate(todo.items(), 1):
-            time.sleep(SLEEP_SECONDS)
-            try:
-                data = fetch_detail(slug)["data"]
-                detail = {k: v for k, v in data.items() if k not in DROP_FIELDS}
-                verdict = judge(detail, client, rules, profile)
-            except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as err:
-                print(
-                    f"{i:3}/{len(todo)} ✗ {item['jobName']}（{type(err).__name__}: {err}）"
-                )
-                failed += 1
-                continue
-
-            save_judged(conn, slug, item, detail, verdict, hashes)
-            fit_count += verdict.fit
-            mark = "✅" if verdict.fit else "❌"
-            print(
-                f"{i:3}/{len(todo)} {mark} {detail['header']['jobName']}（{detail['header']['custName']}）"
-            )
-            print(f"        {verdict.reason}")
-            if verdict.fit:
-                print(f"        https://www.104.com.tw/job/{slug}")
-
-        print(
-            f"\n這次寫入 {list_rejected + len(todo) - failed} 筆"
-            f"（判斷 {len(todo) - failed} 筆，其中適合 {fit_count} 筆；"
-            f"薪資刷掉 {list_rejected} 筆）"
-            + (f"，失敗 {failed} 筆沒寫入" if failed else "")
-        )
-        summarise(conn)
+        run(conn, keyword, pages, filters)
 
 
 if __name__ == "__main__":
