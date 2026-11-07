@@ -333,3 +333,24 @@ def test_at_limit_keeps_passing_items_from_last_rejected_report() -> None:
         ItemAnswer(**FOUND),
         ItemAnswer(key="news", status="not_found", answer="", sources=[]),
     ]
+
+
+class BrokenSearch:
+    def search(self, query: str) -> list[SearchResult]:
+        raise ConnectionError("Tavily 連不上")
+
+
+def test_search_failure_is_sent_to_model_and_loop_continues() -> None:
+    failed = call("search", query="○○科技")
+    llm = ScriptedLLM([failed], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=BrokenSearch(),
+    )
+
+    assert "Tavily 連不上" in tool_output(llm, failed)
+    assert report.items == [ItemAnswer(**NOT_FOUND)]

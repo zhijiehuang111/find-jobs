@@ -252,11 +252,16 @@ def research(
                     )
                 elif fc.name == "search":
                     query = _SearchArgs.model_validate_json(fc.arguments).query
-                    results = searcher.search(query)
-                    seen_urls.update(_normalize_url(r.url) for r in results)
-                    output = json.dumps(
-                        [r.model_dump() for r in results], ensure_ascii=False
-                    )
+                    try:
+                        results = searcher.search(query)
+                    except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
+                        # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
+                        output = f"搜尋失敗：{e}"
+                    else:
+                        seen_urls.update(_normalize_url(r.url) for r in results)
+                        output = json.dumps(
+                            [r.model_dump() for r in results], ensure_ascii=False
+                        )
                 else:
                     output = f"沒有這個工具：{fc.name}"
             except ValidationError as e:
