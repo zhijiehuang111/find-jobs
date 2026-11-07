@@ -43,6 +43,7 @@ FOUND = {
     "sources": [FAKE_URL],
 }
 NOT_FOUND = {"key": "what_it_does", "status": "not_found", "answer": "", "sources": []}
+NEWS_NOT_FOUND = {**NOT_FOUND, "key": "news"}
 
 
 def call(name: str, **arguments: Any) -> ResponseFunctionToolCall:
@@ -110,9 +111,7 @@ def test_search_then_submit_returns_report() -> None:
             )
         ],
     )
-    search = FakeSearch(
-        [SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")]
-    )
+    search = FakeSearch([SEARCH_HIT])
 
     report = research(
         COMPANY,
@@ -145,19 +144,17 @@ def test_each_turn_sends_full_history() -> None:
     # 不用伺服器端狀態，所以第二輪要自己帶上：原本的輸入、模型的呼叫、工具的回應
     search_call = call("search", query="○○科技 產品")
     llm = ScriptedLLM([search_call], [submit(NOT_FOUND)])
-    search = FakeSearch(
-        [SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")]
-    )
+    search = FakeSearch([SEARCH_HIT])
 
     research(COMPANY, [WHAT_IT_DOES], [], client=llm.as_client(), searcher=search)
 
     first, second = (r["input"] for r in llm.requests)
     assert second[: len(first)] == first
     assert second[len(first)] == search_call
-    tool_output = second[len(first) + 1]
-    assert tool_output["type"] == "function_call_output"
-    assert tool_output["call_id"] == search_call.call_id
-    assert [r["url"] for r in json.loads(tool_output["output"])] == [FAKE_URL]
+    search_output = second[len(first) + 1]
+    assert search_output["type"] == "function_call_output"
+    assert search_output["call_id"] == search_call.call_id
+    assert [r["url"] for r in json.loads(search_output["output"])] == [FAKE_URL]
 
 
 def test_known_facts_are_sent_to_model() -> None:
@@ -184,7 +181,7 @@ def test_stops_at_tool_call_limit_with_all_not_found() -> None:
     llm = ScriptedLLM(
         [call("search", query="甲"), call("search", query="乙")],
         [call("search", query="丙"), call("search", query="丁")],
-        [submit()],
+        [submit(NOT_FOUND)],
     )
     search = FakeSearch([])
 
@@ -200,9 +197,7 @@ def test_stops_at_tool_call_limit_with_all_not_found() -> None:
     assert search.queries == ["甲", "乙", "丙"]
     assert len(llm.requests) == 2
     assert report.tool_calls == 3
-    assert report.items == [
-        ItemAnswer(key="what_it_does", status="not_found", answer="", sources=[])
-    ]
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
 
 
 def test_made_up_url_is_sent_back_then_fixed_report_passes() -> None:
@@ -254,9 +249,6 @@ def test_source_url_matches_ignoring_trailing_slash_and_fragment() -> None:
     )
 
     assert report.items[0].status == "found"
-
-
-NEWS_NOT_FOUND = {**NOT_FOUND, "key": "news"}
 
 
 @pytest.mark.parametrize(
@@ -331,7 +323,7 @@ def test_at_limit_keeps_passing_items_from_last_rejected_report() -> None:
     assert report.tool_calls == 3
     assert report.items == [
         ItemAnswer(**FOUND),
-        ItemAnswer(key="news", status="not_found", answer="", sources=[]),
+        ItemAnswer(**NEWS_NOT_FOUND),
     ]
 
 
