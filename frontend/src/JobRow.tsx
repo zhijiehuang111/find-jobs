@@ -189,8 +189,9 @@ export default function JobRow({
 }
 
 /**
- * 「調查公司」→「調查中」→（重新整理後）「看報告」。不 polling，狀態只在重新整理時更新。
- * 報告按了才抓，展開在這一列下面。
+ * 「調查公司」→「調查中」→（重新整理後）「看報告」或「失敗，重試」。不 polling，狀態只在重新整理時更新。
+ * 報告按了才抓，展開在這一列下面，報告底下可以「重新調查」（覆蓋舊報告）。
+ * 調查中不給按鈕；卡太久的後端會直接回失敗。
  */
 function ResearchToggle({
   job,
@@ -217,6 +218,13 @@ function ResearchToggle({
       .catch((e: Error) => setError(e.message))
   }
 
+  function rerun() {
+    // 舊報告要被覆蓋了，收起來，下次打開重抓
+    setOpen(false)
+    setResearch(null)
+    onResearch()
+  }
+
   const button =
     'text-[12.5px] text-mute transition-colors hover:text-ink disabled:opacity-40'
 
@@ -230,7 +238,7 @@ function ResearchToggle({
         </button>
       ) : (
         <button type="button" onClick={onResearch} disabled={busy} className={button}>
-          調查公司
+          {job.research_status === 'failed' ? '失敗，重試' : '調查公司'}
         </button>
       )}
 
@@ -238,7 +246,17 @@ function ResearchToggle({
         (error ? (
           <p className="mt-1 text-[12.5px] text-mute">讀不到報告：{error}</p>
         ) : research?.report ? (
-          <Report research={research} />
+          <>
+            <Report research={research} />
+            <button
+              type="button"
+              onClick={rerun}
+              disabled={busy}
+              className={`${button} mt-[6px] pl-3`}
+            >
+              重新調查
+            </button>
+          </>
         ) : (
           <p className="mt-1 text-[12.5px] text-mute">載入中</p>
         ))}

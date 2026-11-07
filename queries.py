@@ -2,6 +2,7 @@
 回傳一律是 dict —— 呼叫端拿到就能直接當 JSON 丟出去。
 """
 
+from datetime import datetime
 from typing import Any, Literal
 
 from psycopg import Connection, sql
@@ -22,6 +23,20 @@ SORTS: dict[str, sql.SQL] = {
     "first_seen": sql.SQL("first_seen_at DESC, slug"),
     "starred": sql.SQL("starred_at DESC NULLS LAST, slug"),
 }
+
+# 公司調查卡在調查中多久就當作失敗（程式掛了、重啟了，DB 裡就會一直停在 running）。
+# 不寫回 DB，讀的時候換算：列表、報告看到的是失敗，再按一次就能重新調查。
+# 用到的地方表都叫 r。
+STUCK_MINUTES = 10
+STUCK = sql.SQL(
+    "(r.status = 'running' AND r.started_at < now() - make_interval(mins => {}))"
+).format(sql.Literal(STUCK_MINUTES))
+RESEARCH_STATUS = sql.SQL("CASE WHEN {stuck} THEN 'failed' ELSE r.status END").format(
+    stuck=STUCK
+)
+RESEARCH_ERROR = sql.SQL("CASE WHEN {stuck} THEN {msg} ELSE r.error END").format(
+    stuck=STUCK, msg=sql.Literal(f"超過 {STUCK_MINUTES} 分鐘沒有結果，當作失敗")
+)
 
 # 攤平在 SQL 裡做完
 COLUMNS = sql.SQL("""
@@ -44,11 +59,11 @@ COLUMNS = sql.SQL("""
     starred_at,
     first_seen_at,
     judged_at,
-    (SELECT status FROM company_research
-     WHERE company = jobs.raw_list ->> 'custName')     AS research_status,
-    (SELECT finished_at FROM company_research
-     WHERE company = jobs.raw_list ->> 'custName')     AS research_finished_at
-""")
+    (SELECT {research_status} FROM company_research r
+     WHERE r.company = jobs.raw_list ->> 'custName')   AS research_status,
+    (SELECT r.finished_at FROM company_research r
+     WHERE r.company = jobs.raw_list ->> 'custName')   AS research_finished_at
+""").format(research_status=RESEARCH_STATUS)
 
 
 LIST = sql.SQL("""
@@ -174,8 +189,10 @@ def set_star(conn: Connection, slug: str, starred: bool) -> dict | None:
 
 # 公司調查：一家公司一列，以 104 的公司名稱（custName）對上職缺，同一家公司的職缺共用。
 
+# 已經有一列時整列重設成新的一輪，但調查中的不動（不然再按一次就多花一次錢），卡住的照樣重設。
+# RETURNING 只回傳這次新增或重設的那一列；調查中而沒動到、或 slug 不存在，就什麼都不回。
 START_RESEARCH = sql.SQL("""
-    INSERT INTO company_research (company, status)
+    INSERT INTO company_research AS r (company, status)
     SELECT raw_list ->> 'custName', 'running' FROM jobs WHERE slug = %(slug)s
     ON CONFLICT (company) DO UPDATE SET
         status      = 'running',
@@ -184,8 +201,14 @@ START_RESEARCH = sql.SQL("""
         model       = NULL,
         started_at  = now(),
         finished_at = NULL
+    WHERE r.status <> 'running' OR {stuck}
     RETURNING company, status, report, error, model, started_at, finished_at
-""")
+""").format(stuck=STUCK)
+
+# 只寫自己這一輪（以開始時間認）：卡住的那輪被重試後才跑完，不能蓋掉還在跑的新一輪
+THIS_ROUND = sql.SQL(
+    "company = %(company)s AND started_at = %(started_at)s AND status = 'running'"
+)
 
 FINISH_RESEARCH = sql.SQL("""
     UPDATE company_research SET
@@ -193,33 +216,68 @@ FINISH_RESEARCH = sql.SQL("""
         report      = %(report)s,
         model       = %(model)s,
         finished_at = now()
-    WHERE company = %(company)s
-""")
+    WHERE {this_round}
+""").format(this_round=THIS_ROUND)
+
+FAIL_RESEARCH = sql.SQL("""
+    UPDATE company_research SET
+        status      = 'failed',
+        error       = %(error)s,
+        finished_at = now()
+    WHERE {this_round}
+""").format(this_round=THIS_ROUND)
 
 # jobs 也有 status、model，JOIN 時要帶表名
 GET_RESEARCH = sql.SQL("""
-    SELECT r.company, r.status, r.report, r.error, r.model, r.started_at, r.finished_at
+    SELECT r.company, {status} AS status, r.report, {error} AS error,
+           r.model, r.started_at, r.finished_at
     FROM jobs
     LEFT JOIN company_research r ON r.company = jobs.raw_list ->> 'custName'
     WHERE jobs.slug = %(slug)s
-""")
+""").format(status=RESEARCH_STATUS, error=RESEARCH_ERROR)
 
 
 def start_research(conn: Connection, slug: str) -> dict | None:
-    """把這筆職缺的公司標成調查中。slug 不存在回 None。"""
+    """把這筆職缺的公司標成調查中。slug 不存在回 None。
+    已經在調查中就不動，回傳的 started 是 False，呼叫端不要再開一次調查。"""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(START_RESEARCH, {"slug": slug})
         row = cur.fetchone()
     conn.commit()
-    return row
+    if row is not None:
+        return {**row, "started": True}
+    # 沒開跑：要嘛正在調查中，要嘛 slug 不存在（get_research 回 None）
+    current = get_research(conn, slug)
+    return None if current is None else {**current, "started": False}
 
 
 def finish_research(
-    conn: Connection, company: str, report: dict[str, Any], model: str
+    conn: Connection,
+    company: str,
+    started_at: datetime,
+    report: dict[str, Any],
+    model: str,
 ) -> None:
+    """started_at 是 start_research 回的那個，認得出是哪一輪。"""
     conn.execute(
         FINISH_RESEARCH,
-        {"company": company, "report": Jsonb(report), "model": model},
+        {
+            "company": company,
+            "started_at": started_at,
+            "report": Jsonb(report),
+            "model": model,
+        },
+    )
+    conn.commit()
+
+
+def fail_research(
+    conn: Connection, company: str, started_at: datetime, error: str
+) -> None:
+    """started_at 同 finish_research。"""
+    conn.execute(
+        FAIL_RESEARCH,
+        {"company": company, "started_at": started_at, "error": error},
     )
     conn.commit()
 
