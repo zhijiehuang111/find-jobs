@@ -39,3 +39,20 @@ CREATE TABLE
         )
     );
 
+
+-- 公司調查的報告，一家公司一列，同一家公司的職缺共用（以 jobs.raw_list ->> 'custName' 對上）。
+-- 重新調查會覆蓋，不留歷史。
+CREATE TABLE
+    company_research (
+        company TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed')),
+        report JSONB,
+        error TEXT,
+        model TEXT,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT now (),
+        finished_at TIMESTAMPTZ,
+        CONSTRAINT done_has_report CHECK (
+            status <> 'done'
+            OR report IS NOT NULL
+        )
+    );

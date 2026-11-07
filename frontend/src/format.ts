@@ -62,3 +62,19 @@ export function fmtRejectedBy(raw: string | null): string {
   if (!raw) return "規則刷掉";
   return REJECTED[raw] ?? `規則刷掉：${raw}`;
 }
+
+/** timestamptz 的 ISO 字串 → 本地的「2026-11-06」。 */
+export function fmtDay(iso: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("sv-SE");
+}
+
+/** 來源網址顯示成「example.com/about」，完整網址放 hover。 */
+export function fmtSource(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}

@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from psycopg import Connection, sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 Verdict = Literal["fit", "unfit", "filtered"]
 Label = Literal["yes", "no", "unsure"]
@@ -42,7 +43,11 @@ COLUMNS = sql.SQL("""
     starred,
     starred_at,
     first_seen_at,
-    judged_at
+    judged_at,
+    (SELECT status FROM company_research
+     WHERE company = jobs.raw_list ->> 'custName')     AS research_status,
+    (SELECT finished_at FROM company_research
+     WHERE company = jobs.raw_list ->> 'custName')     AS research_finished_at
 """)
 
 
@@ -165,3 +170,62 @@ def set_label(
 
 def set_star(conn: Connection, slug: str, starred: bool) -> dict | None:
     return _returning(conn, STAR, {"starred": starred, "slug": slug})
+
+
+# 公司調查：一家公司一列，以 104 的公司名稱（custName）對上職缺，同一家公司的職缺共用。
+
+START_RESEARCH = sql.SQL("""
+    INSERT INTO company_research (company, status)
+    SELECT raw_list ->> 'custName', 'running' FROM jobs WHERE slug = %(slug)s
+    ON CONFLICT (company) DO UPDATE SET
+        status      = 'running',
+        report      = NULL,
+        error       = NULL,
+        model       = NULL,
+        started_at  = now(),
+        finished_at = NULL
+    RETURNING company, status, report, error, model, started_at, finished_at
+""")
+
+FINISH_RESEARCH = sql.SQL("""
+    UPDATE company_research SET
+        status      = 'done',
+        report      = %(report)s,
+        model       = %(model)s,
+        finished_at = now()
+    WHERE company = %(company)s
+""")
+
+# jobs 也有 status、model，JOIN 時要帶表名
+GET_RESEARCH = sql.SQL("""
+    SELECT r.company, r.status, r.report, r.error, r.model, r.started_at, r.finished_at
+    FROM jobs
+    LEFT JOIN company_research r ON r.company = jobs.raw_list ->> 'custName'
+    WHERE jobs.slug = %(slug)s
+""")
+
+
+def start_research(conn: Connection, slug: str) -> dict | None:
+    """把這筆職缺的公司標成調查中。slug 不存在回 None。"""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(START_RESEARCH, {"slug": slug})
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def finish_research(
+    conn: Connection, company: str, report: dict[str, Any], model: str
+) -> None:
+    conn.execute(
+        FINISH_RESEARCH,
+        {"company": company, "report": Jsonb(report), "model": model},
+    )
+    conn.commit()
+
+
+def get_research(conn: Connection, slug: str) -> dict | None:
+    """slug 不存在回 None；職缺在、公司還沒調查過時，company 那幾欄都是 None。"""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(GET_RESEARCH, {"slug": slug})
+        return cur.fetchone()

@@ -19,9 +19,34 @@ export type Job = {
   starred_at: string | null
   first_seen_at: string | null
   judged_at: string | null
+  /** 這家公司的調查狀態；同一家公司的職缺共用一份報告。null = 還沒調查過 */
+  research_status: ResearchStatus | null
+  research_finished_at: string | null
 }
 
 export type Label = 'yes' | 'no' | 'unsure'
+
+export type ResearchStatus = 'running' | 'done' | 'failed'
+
+/** 欄位對齊 company_research.Report 的 items，name 是 API 補上的 */
+export type ResearchAnswer = {
+  key: string
+  name: string
+  status: 'found' | 'not_found'
+  answer: string
+  sources: string[]
+}
+
+/** GET / POST /api/jobs/{slug}/research；調查中時 report 是 null */
+export type Research = {
+  company: string
+  status: ResearchStatus
+  report: { items: ResearchAnswer[] } | null
+  error: string | null
+  model: string | null
+  started_at: string
+  finished_at: string | null
+}
 
 export type Stats = {
   fit: number
