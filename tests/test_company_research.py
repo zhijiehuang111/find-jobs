@@ -303,3 +303,33 @@ def test_found_without_sources_is_sent_back() -> None:
 
     assert "what_it_does" in tool_output(llm, bad)
     assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+def test_at_limit_keeps_passing_items_from_last_rejected_report() -> None:
+    # 新聞用了編造的網址被退回，模型繼續搜尋就到了上限：在做什麼保留，新聞改成查不到
+    bad_news = {
+        "key": "news",
+        "status": "found",
+        "answer": "○○科技完成 B 輪募資",
+        "sources": ["https://example.com/made-up"],
+    }
+    llm = ScriptedLLM(
+        [call("search", query="○○科技")],
+        [submit(FOUND, bad_news)],
+        [call("search", query="○○科技 新聞")],
+    )
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES, NEWS],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+        max_tool_calls=3,
+    )
+
+    assert report.tool_calls == 3
+    assert report.items == [
+        ItemAnswer(**FOUND),
+        ItemAnswer(key="news", status="not_found", answer="", sources=[]),
+    ]
