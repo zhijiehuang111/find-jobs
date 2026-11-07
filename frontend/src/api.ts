@@ -1,4 +1,4 @@
-import type { Job, Label, Stats } from './types'
+import type { Job, Label, Research, Stats } from './types'
 
 export const PAGE = 50
 
@@ -49,4 +49,13 @@ export function setStar(slug: string, starred: boolean): Promise<Job> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ starred }),
   })
+}
+
+/** 開始調查這筆職缺的公司。馬上回「調查中」，報告要等重新整理後按「看報告」 */
+export function startResearch(slug: string): Promise<Research> {
+  return json<Research>(`/api/jobs/${slug}/research`, { method: 'POST' })
+}
+
+export function getResearch(slug: string): Promise<Research> {
+  return json<Research>(`/api/jobs/${slug}/research`)
 }

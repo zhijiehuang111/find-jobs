@@ -9,16 +9,17 @@
 basic auth。要跟 Postgres 一樣只綁 127.0.0.1，得自己指定 --host。
 """
 
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Iterator
+from contextlib import AbstractContextManager, asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from psycopg import Connection
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
+from company_research import ResearchItem, research
 from db import conninfo
 from queries import Label, Sort, Verdict
 
@@ -41,6 +42,27 @@ def get_conn() -> Iterator[Connection]:
 
 
 Db = Annotated[Connection, Depends(get_conn)]
+
+Connect = Callable[[], AbstractContextManager[Connection]]
+
+
+def get_connect() -> Connect:
+    """給背景任務自己開連線用。request 的那條在回應送出後就還回 pool 了，不能留給它。"""
+    return app.state.pool.connection
+
+
+# 這張先只查一個項目，內容照 #11 的「在做什麼」
+RESEARCH_ITEMS = [
+    ResearchItem(
+        key="what_it_does",
+        name="在做什麼",
+        question="這家公司的產品或服務是什麼？客戶是誰？怎麼賺錢？",
+        criteria=(
+            "要具體到產品名稱或服務內容，只寫產業類別不算；"
+            "代工或接案的公司要說出主要客戶的類型。"
+        ),
+    ),
+]
 
 
 class LabelBody(BaseModel):
@@ -91,3 +113,38 @@ def set_label(conn: Db, slug: str, body: LabelBody) -> dict:
 @app.post("/api/jobs/{slug}/star")
 def set_star(conn: Db, slug: str, body: StarBody) -> dict:
     return _found(queries.set_star(conn, slug, body.starred), slug)
+
+
+def run_research(company: str, connect: Connect) -> None:
+    """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。"""
+    report = research(company, RESEARCH_ITEMS, [])
+    with connect() as conn:
+        queries.finish_research(
+            conn, company, report.model_dump(mode="json"), report.model
+        )
+
+
+@app.post("/api/jobs/{slug}/research")
+def start_research(
+    conn: Db,
+    connect: Annotated[Connect, Depends(get_connect)],
+    background: BackgroundTasks,
+    slug: str,
+) -> dict:
+    """開始調查這筆職缺的公司，馬上回「調查中」，調查在背景跑。"""
+    row = _found(queries.start_research(conn, slug), slug)
+    background.add_task(run_research, row["company"], connect)
+    return row
+
+
+@app.get("/api/jobs/{slug}/research")
+def get_research(conn: Db, slug: str) -> dict:
+    """這筆職缺的公司的調查報告。每個項目補上名稱，前端不用自己對 key。"""
+    row = _found(queries.get_research(conn, slug), slug)
+    if row["company"] is None:
+        raise HTTPException(status_code=404, detail=f"這家公司還沒調查：{slug}")
+    if row["report"]:
+        names = {item.key: item.name for item in RESEARCH_ITEMS}
+        for item in row["report"]["items"]:
+            item["name"] = names.get(item["key"], item["key"])
+    return row

@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
-from api import app, get_conn
+from api import app, get_conn, get_connect
 
 TEST_DB_URL = "postgresql://test:test@127.0.0.1:55432/find_jobs_test"
 SCHEMA = Path(__file__).parent.parent / "find_jobs.sql"
@@ -31,7 +31,7 @@ def schema() -> None:
             pytrace=False,
         )
     with conn:
-        conn.execute("DROP TABLE IF EXISTS jobs")
+        conn.execute("DROP TABLE IF EXISTS jobs, company_research")
         conn.execute(SCHEMA.read_bytes())
 
 
@@ -39,7 +39,7 @@ def schema() -> None:
 def db(schema: None) -> Iterator[psycopg.Connection]:
     """每個測試從空表開始。"""
     with psycopg.connect(TEST_DB_URL, autocommit=True) as conn:
-        conn.execute("TRUNCATE jobs")
+        conn.execute("TRUNCATE jobs, company_research")
         yield conn
 
 
@@ -52,6 +52,8 @@ def client(db: psycopg.Connection) -> Iterator[TestClient]:
             yield conn
 
     app.dependency_overrides[get_conn] = test_conn
+    # 背景任務自己開的連線也要打到測試 DB
+    app.dependency_overrides[get_connect] = lambda: lambda: psycopg.connect(TEST_DB_URL)
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -63,6 +65,7 @@ def add_job(db: psycopg.Connection) -> Callable[..., str]:
     def add(
         slug: str,
         *,
+        company: str = "某某科技",
         fit: bool = True,
         rejected: bool = False,
         human_label: str | None = None,
@@ -90,7 +93,7 @@ def add_job(db: psycopg.Connection) -> Callable[..., str]:
                 "raw_list": Jsonb(
                     {
                         "jobName": "後端工程師",
-                        "custName": "某某科技",
+                        "custName": company,
                         "jobAddrNoDesc": "台北市信義區",
                         "appearDate": "20261101",
                         "salaryLow": 60000,

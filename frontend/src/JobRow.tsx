@@ -1,5 +1,7 @@
-import type { Job, Label } from './types'
-import { fmtAddress, fmtDate, fmtRejectedBy, fmtSalary } from './format'
+import { useState } from 'react'
+import { getResearch } from './api'
+import type { Job, Label, Research } from './types'
+import { fmtAddress, fmtDate, fmtDay, fmtRejectedBy, fmtSalary, fmtSource } from './format'
 
 const LABELS: { value: Label; text: string; title: string }[] = [
   { value: 'yes', text: 'Y', title: '我適合這個職缺' },
@@ -35,6 +37,7 @@ type Props = {
   onSubmit: () => void
   onCancel: () => void
   onStar: () => void
+  onResearch: () => void
 }
 
 export default function JobRow({
@@ -47,6 +50,7 @@ export default function JobRow({
   onSubmit,
   onCancel,
   onStar,
+  onResearch,
 }: Props) {
   const pending = pendingLabel !== null
   // 已標註的列就地變淡（不抽掉，留在原位當天然 undo）；pending 不算已標註，不變淡
@@ -153,6 +157,8 @@ export default function JobRow({
           </p>
         )}
 
+        <ResearchToggle job={job} busy={busy} onResearch={onResearch} />
+
         {pending && (
           <div className="mt-[7px] flex flex-wrap items-center gap-x-3 gap-y-1">
             <input
@@ -179,5 +185,102 @@ export default function JobRow({
         )}
       </div>
     </li>
+  )
+}
+
+/**
+ * 「調查公司」→「調查中」→（重新整理後）「看報告」。不 polling，狀態只在重新整理時更新。
+ * 報告按了才抓，展開在這一列下面。
+ */
+function ResearchToggle({
+  job,
+  busy,
+  onResearch,
+}: {
+  job: Job
+  busy: boolean
+  onResearch: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [research, setResearch] = useState<Research | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  function toggle() {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    setOpen(true)
+    setError(null)
+    getResearch(job.slug)
+      .then(setResearch)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  const button =
+    'text-[12.5px] text-mute transition-colors hover:text-ink disabled:opacity-40'
+
+  return (
+    <div className="mt-[5px]">
+      {job.research_status === 'running' ? (
+        <span className="text-[12.5px] text-mute">調查中</span>
+      ) : job.research_status === 'done' ? (
+        <button type="button" onClick={toggle} aria-expanded={open} className={button}>
+          {open ? '收起報告' : '看報告'}
+        </button>
+      ) : (
+        <button type="button" onClick={onResearch} disabled={busy} className={button}>
+          調查公司
+        </button>
+      )}
+
+      {open &&
+        (error ? (
+          <p className="mt-1 text-[12.5px] text-mute">讀不到報告：{error}</p>
+        ) : research?.report ? (
+          <Report research={research} />
+        ) : (
+          <p className="mt-1 text-[12.5px] text-mute">載入中</p>
+        ))}
+    </div>
+  )
+}
+
+function Report({ research }: { research: Research }) {
+  return (
+    <div className="mt-[6px] max-w-[72ch] border-l-2 border-line pl-3">
+      <p className="text-[12px] text-mute tabular-nums">
+        {research.company} · 調查日期 {fmtDay(research.finished_at)}
+      </p>
+      {research.report?.items.map((item) => (
+        <section key={item.key} className="mt-[7px]">
+          <h4 className="text-[13px] font-semibold text-ink">{item.name}</h4>
+          {item.status === 'found' ? (
+            <>
+              <p className="mt-[2px] text-[14px] leading-[1.65] whitespace-pre-line text-read">
+                {item.answer}
+              </p>
+              <ul className="mt-[3px]">
+                {item.sources.map((url) => (
+                  <li key={url} className="truncate text-[12.5px] leading-[1.6]">
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={url}
+                      className="text-accent hover:underline"
+                    >
+                      {fmtSource(url)}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="mt-[2px] text-[13px] text-mute">查不到</p>
+          )}
+        </section>
+      ))}
+    </div>
   )
 }

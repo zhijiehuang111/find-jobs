@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import JobRow from './JobRow'
-import { PAGE, getStats, listJobs, setLabel, setStar } from './api'
+import { PAGE, getStats, listJobs, setLabel, setStar, startResearch } from './api'
 import { TABS, type Job, type Label, type Stats, type TabKey } from './types'
 
 /**
@@ -162,6 +162,29 @@ export default function App() {
     else void write(job.slug, () => setStar(job.slug, !job.starred))
   }
 
+  /**
+   * 只更新按的那一列。同公司的其他列共用同一份報告，但要重新整理才會跟著變 ——
+   * 「職缺對到哪家公司」只有後端知道，前端不自己比對。
+   */
+  async function onResearch(job: Job) {
+    setBusy(job.slug)
+    setWriteError(null)
+    try {
+      const r = await startResearch(job.slug)
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.slug === job.slug
+            ? { ...j, research_status: r.status, research_finished_at: r.finished_at }
+            : j,
+        ),
+      )
+    } catch (e) {
+      setWriteError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-[1080px] px-3 sm:px-5">
       <header className="sticky top-0 z-10 bg-white">
@@ -248,6 +271,7 @@ export default function App() {
                   onSubmit={() => pending && commit(job, pending.label, note)}
                   onCancel={cancel}
                   onStar={() => onStar(job)}
+                  onResearch={() => void onResearch(job)}
                 />
               ))}
             </ul>
