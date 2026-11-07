@@ -344,5 +344,6 @@ def test_search_failure_is_sent_to_model_and_loop_continues() -> None:
         searcher=BrokenSearch(),
     )
 
-    assert "Tavily 連不上" in tool_output(llm, failed)
+    # 帶上錯誤類型：例外訊息是空的時候，模型至少知道是哪種錯
+    assert "ConnectionError: Tavily 連不上" in tool_output(llm, failed)
     assert report.items == [ItemAnswer(**NOT_FOUND)]

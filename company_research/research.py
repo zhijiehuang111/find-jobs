@@ -256,7 +256,7 @@ def research(
                         results = searcher.search(query)
                     except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
                         # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
-                        output = f"搜尋失敗：{e}"
+                        output = f"搜尋失敗：{type(e).__name__}: {e}"
                     else:
                         seen_urls.update(_normalize_url(r.url) for r in results)
                         output = json.dumps(
