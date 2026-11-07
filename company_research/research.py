@@ -121,6 +121,23 @@ def _task_text(company: str, items: list[ResearchItem], known: list[KnownFact]) 
     return "\n\n".join(lines)
 
 
+def _normalize_url(url: str) -> str:
+    """比對來源網址前的最基本正規化：去掉 # 之後的部分和結尾的 /。"""
+    return url.split("#", 1)[0].rstrip("/")
+
+
+def _report_errors(answers: list[ItemAnswer], seen_urls: set[str]) -> list[str]:
+    """交上來的報告哪裡沒通過檢查，每個問題一句話；空的就是通過。"""
+    errors = []
+    for answer in answers:
+        for url in answer.sources:
+            if _normalize_url(url) not in seen_urls:
+                errors.append(
+                    f"{answer.key}：來源網址 {url} 沒有出現在這次的工具回應或已知資料裡"
+                )
+    return errors
+
+
 def _default_client() -> OpenAI:
     # base_url 沒設就是 OpenAI；要換 Ollama 時設 RESEARCH_BASE_URL
     return OpenAI(base_url=os.getenv("RESEARCH_BASE_URL") or None)
@@ -148,6 +165,8 @@ def research(
         {"role": "user", "content": _task_text(company, items, known)}
     ]
     tool_calls = input_tokens = output_tokens = 0
+    # 這次調查看過的網址（正規化後），交報告的來源只能從這裡挑
+    seen_urls = {_normalize_url(fact.source_url) for fact in known}
 
     def report(answers: list[ItemAnswer]) -> Report:
         return Report(
@@ -185,12 +204,18 @@ def research(
             try:
                 if fc.name == "submit_report":
                     submitted = _SubmitReportArgs.model_validate_json(fc.arguments)
-                    return report(submitted.items)
-                if fc.name == "search":
+                    errors = _report_errors(submitted.items, seen_urls)
+                    if not errors:
+                        return report(submitted.items)
+                    output = "報告沒通過檢查，修正後重新交：\n" + "\n".join(
+                        f"- {e}" for e in errors
+                    )
+                elif fc.name == "search":
                     query = _SearchArgs.model_validate_json(fc.arguments).query
+                    results = searcher.search(query)
+                    seen_urls.update(_normalize_url(r.url) for r in results)
                     output = json.dumps(
-                        [r.model_dump() for r in searcher.search(query)],
-                        ensure_ascii=False,
+                        [r.model_dump() for r in results], ensure_ascii=False
                     )
                 else:
                     output = f"沒有這個工具：{fc.name}"

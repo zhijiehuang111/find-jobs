@@ -28,6 +28,14 @@ WHAT_IT_DOES = ResearchItem(
     criteria="要具體到產品名稱或服務內容",
 )
 FAKE_URL = "https://example.com/oo-tech"
+SEARCH_HIT = SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")
+FOUND = {
+    "key": "what_it_does",
+    "status": "found",
+    "answer": "做 △△ 物流管理 SaaS",
+    "sources": [FAKE_URL],
+}
+NOT_FOUND = {"key": "what_it_does", "status": "not_found", "answer": "", "sources": []}
 
 
 def call(name: str, **arguments: Any) -> ResponseFunctionToolCall:
@@ -59,6 +67,14 @@ class ScriptedLLM:
 
     def as_client(self) -> OpenAI:
         return cast(OpenAI, self)
+
+
+def tool_output(llm: ScriptedLLM, fc: ResponseFunctionToolCall) -> str:
+    """最後一輪送給模型的歷史裡，這次工具呼叫得到的回應。"""
+    for item in llm.requests[-1]["input"]:
+        if isinstance(item, dict) and item.get("call_id") == fc.call_id:
+            return item["output"]
+    raise AssertionError(f"歷史裡沒有 {fc.call_id} 的回應")
 
 
 class FakeSearch:
@@ -180,3 +196,54 @@ def test_stops_at_tool_call_limit_with_all_not_found() -> None:
     assert report.items == [
         ItemAnswer(key="what_it_does", status="not_found", answer="", sources=[])
     ]
+
+
+def test_made_up_url_is_sent_back_then_fixed_report_passes() -> None:
+    made_up = "https://example.com/made-up"
+    bad = submit({**FOUND, "sources": [made_up]})
+    llm = ScriptedLLM([call("search", query="○○科技 產品")], [bad], [submit(FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+    )
+
+    assert made_up in tool_output(llm, bad)
+    assert report.items == [ItemAnswer(**FOUND)]
+    assert report.tool_calls == 3
+
+
+def test_known_fact_source_url_counts_as_source() -> None:
+    profile_url = "https://example.com/profile"
+    llm = ScriptedLLM([submit({**FOUND, "sources": [profile_url]})])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [KnownFact(content="本公司專營 △△ 物流管理 SaaS", source_url=profile_url)],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert report.items[0].sources == [profile_url]
+
+
+def test_source_url_matches_ignoring_trailing_slash_and_fragment() -> None:
+    # 搜尋結果是 FAKE_URL，交的時候多了結尾的 / 和 #段落，仍算出現過
+    llm = ScriptedLLM(
+        [call("search", query="○○科技")],
+        [submit({**FOUND, "sources": [FAKE_URL + "/#about"]})],
+    )
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+    )
+
+    assert report.items[0].status == "found"
