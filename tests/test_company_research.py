@@ -287,3 +287,19 @@ def test_wrong_item_keys_are_sent_back(answers: list[dict], named_key: str) -> N
 
     assert named_key in tool_output(llm, bad)
     assert [item.key for item in report.items] == ["what_it_does", "news"]
+
+
+def test_found_without_sources_is_sent_back() -> None:
+    bad = submit({**FOUND, "sources": []})
+    llm = ScriptedLLM([bad], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert "what_it_does" in tool_output(llm, bad)
+    assert report.items == [ItemAnswer(**NOT_FOUND)]

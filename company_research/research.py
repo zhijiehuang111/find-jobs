@@ -142,6 +142,8 @@ def _report_errors(
         if key not in expected:
             errors.append(f"{key} 不是這次的調查項目")
     for answer in answers:
+        if answer.status == "found" and not answer.sources:
+            errors.append(f"{answer.key}：status 是 found，但沒有附來源網址")
         for url in answer.sources:
             if _normalize_url(url) not in seen_urls:
                 errors.append(
