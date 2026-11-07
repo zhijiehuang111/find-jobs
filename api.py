@@ -9,8 +9,10 @@
 basic auth。要跟 Postgres 一樣只綁 127.0.0.1，得自己指定 --host。
 """
 
+import logging
 from collections.abc import AsyncGenerator, Callable, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
@@ -22,6 +24,8 @@ import queries
 from company_research import ResearchItem, research
 from db import conninfo
 from queries import Label, Sort, Verdict
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -115,12 +119,21 @@ def set_star(conn: Db, slug: str, body: StarBody) -> dict:
     return _found(queries.set_star(conn, slug, body.starred), slug)
 
 
-def run_research(company: str, connect: Connect) -> None:
-    """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。"""
-    report = research(company, RESEARCH_ITEMS, [])
+def run_research(company: str, started_at: datetime, connect: Connect) -> None:
+    """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。
+    出錯就存成失敗，不然會一直停在調查中、前端也沒辦法重試。"""
+    try:
+        report = research(company, RESEARCH_ITEMS, [])
+    except Exception as err:
+        log.exception("公司調查失敗：%s", company)
+        with connect() as conn:
+            queries.fail_research(
+                conn, company, started_at, f"{type(err).__name__}: {err}"
+            )
+        return
     with connect() as conn:
         queries.finish_research(
-            conn, company, report.model_dump(mode="json"), report.model
+            conn, company, started_at, report.model_dump(mode="json"), report.model
         )
 
 
@@ -131,9 +144,11 @@ def start_research(
     background: BackgroundTasks,
     slug: str,
 ) -> dict:
-    """開始調查這筆職缺的公司，馬上回「調查中」，調查在背景跑。"""
+    """開始調查這筆職缺的公司，馬上回「調查中」，調查在背景跑。
+    已經在調查中就直接回現在的狀態，不再開一次。"""
     row = _found(queries.start_research(conn, slug), slug)
-    background.add_task(run_research, row["company"], connect)
+    if row.pop("started"):
+        background.add_task(run_research, row["company"], row["started_at"], connect)
     return row
 
 
