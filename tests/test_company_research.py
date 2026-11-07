@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from openai import OpenAI
 from openai.types.responses import ResponseFunctionToolCall
 
@@ -26,6 +27,12 @@ WHAT_IT_DOES = ResearchItem(
     name="在做什麼",
     question="這家公司的產品或服務是什麼？",
     criteria="要具體到產品名稱或服務內容",
+)
+NEWS = ResearchItem(
+    key="news",
+    name="近期新聞",
+    question="這家公司一年內有什麼新聞？",
+    criteria="只收一年內的新聞，附日期和來源網址",
 )
 FAKE_URL = "https://example.com/oo-tech"
 SEARCH_HIT = SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")
@@ -137,7 +144,7 @@ def test_search_then_submit_returns_report() -> None:
 def test_each_turn_sends_full_history() -> None:
     # 不用伺服器端狀態，所以第二輪要自己帶上：原本的輸入、模型的呼叫、工具的回應
     search_call = call("search", query="○○科技 產品")
-    llm = ScriptedLLM([search_call], [submit()])
+    llm = ScriptedLLM([search_call], [submit(NOT_FOUND)])
     search = FakeSearch(
         [SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")]
     )
@@ -154,7 +161,7 @@ def test_each_turn_sends_full_history() -> None:
 
 
 def test_known_facts_are_sent_to_model() -> None:
-    llm = ScriptedLLM([submit()])
+    llm = ScriptedLLM([submit(NOT_FOUND)])
     known = KnownFact(
         content="本公司專營 △△ 物流管理 SaaS", source_url="https://example.com/profile"
     )
@@ -247,3 +254,36 @@ def test_source_url_matches_ignoring_trailing_slash_and_fragment() -> None:
     )
 
     assert report.items[0].status == "found"
+
+
+NEWS_NOT_FOUND = {**NOT_FOUND, "key": "news"}
+
+
+@pytest.mark.parametrize(
+    ("answers", "named_key"),
+    [
+        pytest.param([NOT_FOUND], "news", id="missing"),
+        pytest.param(
+            [NOT_FOUND, NEWS_NOT_FOUND, {**NOT_FOUND, "key": "salary"}],
+            "salary",
+            id="extra",
+        ),
+        pytest.param(
+            [NOT_FOUND, NOT_FOUND, NEWS_NOT_FOUND], "what_it_does", id="duplicate"
+        ),
+    ],
+)
+def test_wrong_item_keys_are_sent_back(answers: list[dict], named_key: str) -> None:
+    bad = submit(*answers)
+    llm = ScriptedLLM([bad], [submit(NOT_FOUND, NEWS_NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES, NEWS],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert named_key in tool_output(llm, bad)
+    assert [item.key for item in report.items] == ["what_it_does", "news"]

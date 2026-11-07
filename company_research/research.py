@@ -126,9 +126,21 @@ def _normalize_url(url: str) -> str:
     return url.split("#", 1)[0].rstrip("/")
 
 
-def _report_errors(answers: list[ItemAnswer], seen_urls: set[str]) -> list[str]:
+def _report_errors(
+    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: set[str]
+) -> list[str]:
     """交上來的報告哪裡沒通過檢查，每個問題一句話；空的就是通過。"""
     errors = []
+    expected = [item.key for item in items]
+    submitted = [answer.key for answer in answers]
+    for key in expected:
+        if key not in submitted:
+            errors.append(f"少了調查項目 {key}")
+        elif submitted.count(key) > 1:
+            errors.append(f"調查項目 {key} 出現了 {submitted.count(key)} 次，只能一次")
+    for key in dict.fromkeys(submitted):
+        if key not in expected:
+            errors.append(f"{key} 不是這次的調查項目")
     for answer in answers:
         for url in answer.sources:
             if _normalize_url(url) not in seen_urls:
@@ -204,7 +216,7 @@ def research(
             try:
                 if fc.name == "submit_report":
                     submitted = _SubmitReportArgs.model_validate_json(fc.arguments)
-                    errors = _report_errors(submitted.items, seen_urls)
+                    errors = _report_errors(submitted.items, items, seen_urls)
                     if not errors:
                         return report(submitted.items)
                     output = "報告沒通過檢查，修正後重新交：\n" + "\n".join(
