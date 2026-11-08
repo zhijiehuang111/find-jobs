@@ -121,6 +121,61 @@ def _task_text(company: str, items: list[ResearchItem], known: list[KnownFact]) 
     return "\n\n".join(lines)
 
 
+def _normalize_url(url: str) -> str:
+    """比對來源網址前的最基本正規化：去掉 # 之後的部分和結尾的 /。"""
+    return url.split("#", 1)[0].rstrip("/")
+
+
+def _answer_errors(answer: ItemAnswer, seen_urls: set[str]) -> list[str]:
+    """一個項目的答案單獨看有哪些問題（不管 key 對不對）。"""
+    errors = []
+    if answer.status == "found" and not answer.sources:
+        errors.append(f"{answer.key}：status 是 found，但沒有附來源網址")
+    for url in answer.sources:
+        if _normalize_url(url) not in seen_urls:
+            errors.append(
+                f"{answer.key}：來源網址 {url} 沒有出現在這次的工具回應或已知資料裡"
+            )
+    return errors
+
+
+def _report_errors(
+    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: set[str]
+) -> list[str]:
+    """交上來的報告哪裡沒通過檢查，每個問題一句話；空的就是通過。"""
+    errors = []
+    expected = [item.key for item in items]
+    submitted = [answer.key for answer in answers]
+    for key in expected:
+        if key not in submitted:
+            errors.append(f"少了調查項目 {key}")
+        elif submitted.count(key) > 1:
+            errors.append(f"調查項目 {key} 出現了 {submitted.count(key)} 次，只能一次")
+    for key in dict.fromkeys(submitted):
+        if key not in expected:
+            errors.append(f"{key} 不是這次的調查項目")
+    for answer in answers:
+        errors.extend(_answer_errors(answer, seen_urls))
+    return errors
+
+
+def _salvage(
+    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: set[str]
+) -> list[ItemAnswer]:
+    """沒交出通過的報告就到上限時用：每個項目只出現一次、單獨通過檢查的答案保留，
+    其他（沒答、答了好幾次、沒通過）都改成查不到。"""
+    salvaged = []
+    for item in items:
+        matches = [a for a in answers if a.key == item.key]
+        if len(matches) == 1 and not _answer_errors(matches[0], seen_urls):
+            salvaged.append(matches[0])
+        else:
+            salvaged.append(
+                ItemAnswer(key=item.key, status="not_found", answer="", sources=[])
+            )
+    return salvaged
+
+
 def _default_client() -> OpenAI:
     # base_url 沒設就是 OpenAI；要換 Ollama 時設 RESEARCH_BASE_URL
     return OpenAI(base_url=os.getenv("RESEARCH_BASE_URL") or None)
@@ -148,6 +203,9 @@ def research(
         {"role": "user", "content": _task_text(company, items, known)}
     ]
     tool_calls = input_tokens = output_tokens = 0
+    # 這次調查看過的網址（正規化後），交報告的來源只能從這裡挑
+    seen_urls = {_normalize_url(fact.source_url) for fact in known}
+    last_submitted: list[ItemAnswer] = []  # 最後一次交、被退回的報告
 
     def report(answers: list[ItemAnswer]) -> Report:
         return Report(
@@ -185,13 +243,25 @@ def research(
             try:
                 if fc.name == "submit_report":
                     submitted = _SubmitReportArgs.model_validate_json(fc.arguments)
-                    return report(submitted.items)
-                if fc.name == "search":
-                    query = _SearchArgs.model_validate_json(fc.arguments).query
-                    output = json.dumps(
-                        [r.model_dump() for r in searcher.search(query)],
-                        ensure_ascii=False,
+                    errors = _report_errors(submitted.items, items, seen_urls)
+                    if not errors:
+                        return report(submitted.items)
+                    last_submitted = submitted.items
+                    output = "報告沒通過檢查，修正後重新交：\n" + "\n".join(
+                        f"- {e}" for e in errors
                     )
+                elif fc.name == "search":
+                    query = _SearchArgs.model_validate_json(fc.arguments).query
+                    try:
+                        results = searcher.search(query)
+                    except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
+                        # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
+                        output = f"搜尋失敗：{type(e).__name__}: {e}"
+                    else:
+                        seen_urls.update(_normalize_url(r.url) for r in results)
+                        output = json.dumps(
+                            [r.model_dump() for r in results], ensure_ascii=False
+                        )
                 else:
                     output = f"沒有這個工具：{fc.name}"
             except ValidationError as e:
@@ -205,10 +275,6 @@ def research(
                 }
             )
 
-    # 用完工具呼叫次數還沒交報告：全部當查不到
-    return report(
-        [
-            ItemAnswer(key=item.key, status="not_found", answer="", sources=[])
-            for item in items
-        ]
-    )
+    # 用完工具呼叫次數還沒交出通過的報告：從最後一次交的報告裡留下通過的項目，
+    # 完全沒交過就全部查不到
+    return report(_salvage(last_submitted, items, seen_urls))

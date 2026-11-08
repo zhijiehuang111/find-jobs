@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from openai import OpenAI
 from openai.types.responses import ResponseFunctionToolCall
 
@@ -27,7 +28,22 @@ WHAT_IT_DOES = ResearchItem(
     question="這家公司的產品或服務是什麼？",
     criteria="要具體到產品名稱或服務內容",
 )
+NEWS = ResearchItem(
+    key="news",
+    name="近期新聞",
+    question="這家公司一年內有什麼新聞？",
+    criteria="只收一年內的新聞，附日期和來源網址",
+)
 FAKE_URL = "https://example.com/oo-tech"
+SEARCH_HIT = SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")
+FOUND = {
+    "key": "what_it_does",
+    "status": "found",
+    "answer": "做 △△ 物流管理 SaaS",
+    "sources": [FAKE_URL],
+}
+NOT_FOUND = {"key": "what_it_does", "status": "not_found", "answer": "", "sources": []}
+NEWS_NOT_FOUND = {**NOT_FOUND, "key": "news"}
 
 
 def call(name: str, **arguments: Any) -> ResponseFunctionToolCall:
@@ -61,6 +77,14 @@ class ScriptedLLM:
         return cast(OpenAI, self)
 
 
+def tool_output(llm: ScriptedLLM, fc: ResponseFunctionToolCall) -> str:
+    """最後一輪送給模型的歷史裡，這次工具呼叫得到的回應。"""
+    for item in llm.requests[-1]["input"]:
+        if isinstance(item, dict) and item.get("call_id") == fc.call_id:
+            return item["output"]
+    raise AssertionError(f"歷史裡沒有 {fc.call_id} 的回應")
+
+
 class FakeSearch:
     """每次搜尋都回同一組結果，記下查了什麼。"""
 
@@ -87,9 +111,7 @@ def test_search_then_submit_returns_report() -> None:
             )
         ],
     )
-    search = FakeSearch(
-        [SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")]
-    )
+    search = FakeSearch([SEARCH_HIT])
 
     report = research(
         COMPANY,
@@ -121,24 +143,22 @@ def test_search_then_submit_returns_report() -> None:
 def test_each_turn_sends_full_history() -> None:
     # 不用伺服器端狀態，所以第二輪要自己帶上：原本的輸入、模型的呼叫、工具的回應
     search_call = call("search", query="○○科技 產品")
-    llm = ScriptedLLM([search_call], [submit()])
-    search = FakeSearch(
-        [SearchResult(title="○○科技", url=FAKE_URL, content="△△ 物流管理 SaaS")]
-    )
+    llm = ScriptedLLM([search_call], [submit(NOT_FOUND)])
+    search = FakeSearch([SEARCH_HIT])
 
     research(COMPANY, [WHAT_IT_DOES], [], client=llm.as_client(), searcher=search)
 
     first, second = (r["input"] for r in llm.requests)
     assert second[: len(first)] == first
     assert second[len(first)] == search_call
-    tool_output = second[len(first) + 1]
-    assert tool_output["type"] == "function_call_output"
-    assert tool_output["call_id"] == search_call.call_id
-    assert [r["url"] for r in json.loads(tool_output["output"])] == [FAKE_URL]
+    search_output = second[len(first) + 1]
+    assert search_output["type"] == "function_call_output"
+    assert search_output["call_id"] == search_call.call_id
+    assert [r["url"] for r in json.loads(search_output["output"])] == [FAKE_URL]
 
 
 def test_known_facts_are_sent_to_model() -> None:
-    llm = ScriptedLLM([submit()])
+    llm = ScriptedLLM([submit(NOT_FOUND)])
     known = KnownFact(
         content="本公司專營 △△ 物流管理 SaaS", source_url="https://example.com/profile"
     )
@@ -161,7 +181,7 @@ def test_stops_at_tool_call_limit_with_all_not_found() -> None:
     llm = ScriptedLLM(
         [call("search", query="甲"), call("search", query="乙")],
         [call("search", query="丙"), call("search", query="丁")],
-        [submit()],
+        [submit(NOT_FOUND)],
     )
     search = FakeSearch([])
 
@@ -177,6 +197,153 @@ def test_stops_at_tool_call_limit_with_all_not_found() -> None:
     assert search.queries == ["甲", "乙", "丙"]
     assert len(llm.requests) == 2
     assert report.tool_calls == 3
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+def test_made_up_url_is_sent_back_then_fixed_report_passes() -> None:
+    made_up = "https://example.com/made-up"
+    bad = submit({**FOUND, "sources": [made_up]})
+    llm = ScriptedLLM([call("search", query="○○科技 產品")], [bad], [submit(FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+    )
+
+    assert made_up in tool_output(llm, bad)
+    assert report.items == [ItemAnswer(**FOUND)]
+    assert report.tool_calls == 3
+
+
+def test_known_fact_source_url_counts_as_source() -> None:
+    profile_url = "https://example.com/profile"
+    llm = ScriptedLLM([submit({**FOUND, "sources": [profile_url]})])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [KnownFact(content="本公司專營 △△ 物流管理 SaaS", source_url=profile_url)],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert report.items[0].sources == [profile_url]
+
+
+def test_source_url_matches_ignoring_trailing_slash_and_fragment() -> None:
+    # 搜尋結果是 FAKE_URL，交的時候多了結尾的 / 和 #段落，仍算出現過
+    llm = ScriptedLLM(
+        [call("search", query="○○科技")],
+        [submit({**FOUND, "sources": [FAKE_URL + "/#about"]})],
+    )
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+    )
+
+    assert report.items[0].status == "found"
+
+
+@pytest.mark.parametrize(
+    ("answers", "named_key"),
+    [
+        pytest.param([NOT_FOUND], "news", id="missing"),
+        pytest.param(
+            [NOT_FOUND, NEWS_NOT_FOUND, {**NOT_FOUND, "key": "salary"}],
+            "salary",
+            id="extra",
+        ),
+        pytest.param(
+            [NOT_FOUND, NOT_FOUND, NEWS_NOT_FOUND], "what_it_does", id="duplicate"
+        ),
+    ],
+)
+def test_wrong_item_keys_are_sent_back(answers: list[dict], named_key: str) -> None:
+    bad = submit(*answers)
+    llm = ScriptedLLM([bad], [submit(NOT_FOUND, NEWS_NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES, NEWS],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert named_key in tool_output(llm, bad)
+    assert [item.key for item in report.items] == ["what_it_does", "news"]
+
+
+def test_found_without_sources_is_sent_back() -> None:
+    bad = submit({**FOUND, "sources": []})
+    llm = ScriptedLLM([bad], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert "what_it_does" in tool_output(llm, bad)
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+def test_at_limit_keeps_passing_items_from_last_rejected_report() -> None:
+    # 新聞用了編造的網址被退回，模型繼續搜尋就到了上限：在做什麼保留，新聞改成查不到
+    bad_news = {
+        "key": "news",
+        "status": "found",
+        "answer": "○○科技完成 B 輪募資",
+        "sources": ["https://example.com/made-up"],
+    }
+    llm = ScriptedLLM(
+        [call("search", query="○○科技")],
+        [submit(FOUND, bad_news)],
+        [call("search", query="○○科技 新聞")],
+    )
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES, NEWS],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+        max_tool_calls=3,
+    )
+
+    assert report.tool_calls == 3
     assert report.items == [
-        ItemAnswer(key="what_it_does", status="not_found", answer="", sources=[])
+        ItemAnswer(**FOUND),
+        ItemAnswer(**NEWS_NOT_FOUND),
     ]
+
+
+class BrokenSearch:
+    def search(self, query: str) -> list[SearchResult]:
+        raise ConnectionError("Tavily 連不上")
+
+
+def test_search_failure_is_sent_to_model_and_loop_continues() -> None:
+    failed = call("search", query="○○科技")
+    llm = ScriptedLLM([failed], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=BrokenSearch(),
+    )
+
+    # 帶上錯誤類型：例外訊息是空的時候，模型至少知道是哪種錯
+    assert "ConnectionError: Tavily 連不上" in tool_output(llm, failed)
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
