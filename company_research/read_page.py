@@ -26,7 +26,9 @@ class TavilyExtract:
         self.client = TavilyClient()
 
     def read(self, url: str) -> Page:
-        response = self.client.extract(urls=[url], format="markdown")
+        # text 大約只有 markdown 的 1/3：markdown 多出來的大多是導覽列的連結網址，
+        # 模型用不到（只有讀過的網址能當來源）
+        response = self.client.extract(urls=[url], format="text")
         if not response["results"]:
             errors = [f["error"] for f in response["failed_results"]]
             raise RuntimeError(f"讀不到 {url}：{'；'.join(errors) or '沒有回傳內容'}")

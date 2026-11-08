@@ -20,6 +20,9 @@ from company_research.search import Searcher, TavilySearch
 
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_MAX_TOOL_CALLS = 20
+# 一頁最多給模型看幾個字元。每一輪都重送完整歷史，讀過的頁面會一直被重送，
+# 太長的頁面要截掉，不然 token 越疊越多、甚至超過 context window
+MAX_PAGE_CHARS = 15_000
 
 
 class ResearchItem(BaseModel):
@@ -184,6 +187,15 @@ def _salvage(
     return salvaged
 
 
+def _cut_page(content: str) -> str:
+    if len(content) <= MAX_PAGE_CHARS:
+        return content
+    return (
+        content[:MAX_PAGE_CHARS]
+        + f"\n\n（原文共 {len(content)} 字，只給前 {MAX_PAGE_CHARS} 字，後面截掉了）"
+    )
+
+
 def _default_client() -> OpenAI:
     # base_url 沒設就是 OpenAI；要換 Ollama 時設 RESEARCH_BASE_URL
     return OpenAI(base_url=os.getenv("RESEARCH_BASE_URL") or None)
@@ -283,7 +295,7 @@ def research(
                         seen_urls.update(
                             {_normalize_url(url), _normalize_url(page.url)}
                         )
-                        output = page.content
+                        output = _cut_page(page.content)
                 else:
                     output = f"沒有這個工具：{fc.name}"
             except ValidationError as e:

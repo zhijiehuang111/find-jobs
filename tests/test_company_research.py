@@ -408,3 +408,24 @@ def test_read_page_failure_is_sent_to_model_and_url_is_not_a_source() -> None:
     # 沒讀到的網址不算出現過，拿來當來源會被退回
     assert about_url in tool_output(llm, bad)
     assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+def test_long_page_is_cut_and_model_is_told() -> None:
+    # 一頁太長就截斷，免得每一輪重送整段歷史時把 token 撐爆
+    read = call("read_page", url=FAKE_URL)
+    llm = ScriptedLLM([read], [submit(NOT_FOUND)])
+    long_page = "甲" * 15_000 + "乙" * 5_000
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        reader=FakeReader(long_page),
+    )
+
+    output = tool_output(llm, read)
+    assert output.startswith("甲" * 15_000)
+    assert "乙" not in output
+    assert "20000" in output  # 告訴模型原文有多長、後面被截掉了
