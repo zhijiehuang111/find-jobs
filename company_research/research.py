@@ -137,13 +137,26 @@ def _normalize_url(url: str) -> str:
     return url.split("#", 1)[0].rstrip("/")
 
 
-def _answer_errors(answer: ItemAnswer, seen_urls: set[str]) -> list[str]:
+class _SeenUrls:
+    """這次調查看過的網址。加進來和查詢都會先正規化，呼叫端不用管。"""
+
+    def __init__(self) -> None:
+        self._urls: set[str] = set()
+
+    def add(self, *urls: str) -> None:
+        self._urls.update(_normalize_url(url) for url in urls)
+
+    def __contains__(self, url: str) -> bool:
+        return _normalize_url(url) in self._urls
+
+
+def _answer_errors(answer: ItemAnswer, seen_urls: _SeenUrls) -> list[str]:
     """一個項目的答案單獨看有哪些問題（不管 key 對不對）。"""
     errors = []
     if answer.status == "found" and not answer.sources:
         errors.append(f"{answer.key}：status 是 found，但沒有附來源網址")
     for url in answer.sources:
-        if _normalize_url(url) not in seen_urls:
+        if url not in seen_urls:
             errors.append(
                 f"{answer.key}：來源網址 {url} 沒有出現在這次的工具回應或已知資料裡"
             )
@@ -151,7 +164,7 @@ def _answer_errors(answer: ItemAnswer, seen_urls: set[str]) -> list[str]:
 
 
 def _report_errors(
-    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: set[str]
+    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: _SeenUrls
 ) -> list[str]:
     """交上來的報告哪裡沒通過檢查，每個問題一句話；空的就是通過。"""
     errors = []
@@ -171,7 +184,7 @@ def _report_errors(
 
 
 def _salvage(
-    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: set[str]
+    answers: list[ItemAnswer], items: list[ResearchItem], seen_urls: _SeenUrls
 ) -> list[ItemAnswer]:
     """沒交出通過的報告就到上限時用：每個項目只出現一次、單獨通過檢查的答案保留，
     其他（沒答、答了好幾次、沒通過）都改成查不到。"""
@@ -225,8 +238,9 @@ def research(
         {"role": "user", "content": _task_text(company, items, known)}
     ]
     tool_calls = input_tokens = output_tokens = 0
-    # 這次調查看過的網址（正規化後），交報告的來源只能從這裡挑
-    seen_urls = {_normalize_url(fact.source_url) for fact in known}
+    # 交報告的來源只能從這次調查看過的網址裡挑
+    seen_urls = _SeenUrls()
+    seen_urls.add(*(fact.source_url for fact in known))
     last_submitted: list[ItemAnswer] = []  # 最後一次交、被退回的報告
 
     def report(answers: list[ItemAnswer]) -> Report:
@@ -280,7 +294,7 @@ def research(
                         # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
                         output = f"搜尋失敗：{type(e).__name__}: {e}"
                     else:
-                        seen_urls.update(_normalize_url(r.url) for r in results)
+                        seen_urls.add(*(r.url for r in results))
                         output = json.dumps(
                             [r.model_dump() for r in results], ensure_ascii=False
                         )
@@ -292,9 +306,7 @@ def research(
                         output = f"讀網頁失敗：{type(e).__name__}: {e}"
                     else:
                         # 轉址後的網址也算讀過
-                        seen_urls.update(
-                            {_normalize_url(url), _normalize_url(page.url)}
-                        )
+                        seen_urls.add(url, page.url)
                         output = _cut_page(page.content)
                 else:
                     output = f"沒有這個工具：{fc.name}"
