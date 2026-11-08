@@ -305,8 +305,7 @@ def research(
                     except Exception as e:  # noqa: BLE001  404、被擋、逾時都算
                         output = f"讀網頁失敗：{type(e).__name__}: {e}"
                     else:
-                        # 轉址後的網址也算讀過
-                        seen_urls.add(url, page.url)
+                        seen_urls.add(url)
                         output = _cut_page(page.content)
                 else:
                     output = f"沒有這個工具：{fc.name}"
