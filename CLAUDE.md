@@ -7,7 +7,7 @@
 
 | 檔案 | 角色 |
 |---|---|
-| `fetch_104.py` | 104 API 存取（search / detail / 重試）。沒有進入點，只被 import |
+| `fetch_104.py` | 104 API 存取（search / detail / 公司簡介 / 重試）。沒有進入點，只被 import |
 | `judge.py` | JD 攤平成文字 + 呼叫 OpenAI 判 fit/reason。沒有進入點 |
 | `pipeline.py` | 每日主流程：列表 → 去重 → 黑名單 → 薪資 → detail → LLM → DB |
 | `run_daily.sh` | cron 呼叫，跑 3 個關鍵字的 pipeline，log 寫 `logs/` |
@@ -41,7 +41,7 @@ cd frontend && npm run lint && npm run build                           # 前端 
 
 - **打 OpenAI（花錢）**：`pipeline.py`、`rejudge.py`、`eval.py`、`uv run -m company_research`
 - **打 Tavily（花錢）**：`uv run -m company_research`
-- **打 104 API**：`pipeline.py`、`prune_closed.py`、`build_dataset.py`
+- **打 104 API**：`pipeline.py`、`prune_closed.py`、`build_dataset.py`、`api.py` 的「調查公司」（抓公司簡介）
 - **寫 DB**：`pipeline.py`、`rejudge.py`、`prune_closed.py --apply`
 - 先看範圍再跑：`rejudge.py --dry-run`、`prune_closed.py`（不加 `--apply` 只列出）、`eval.py 10`（只跑 10 題）
 

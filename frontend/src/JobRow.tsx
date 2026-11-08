@@ -247,7 +247,7 @@ function ResearchToggle({
           <p className="mt-1 text-[12.5px] text-mute">讀不到報告：{error}</p>
         ) : research?.report ? (
           <>
-            <Report research={research} />
+            <Report research={research} employeeCount={job.employee_count} />
             <button
               type="button"
               onClick={rerun}
@@ -264,11 +264,18 @@ function ResearchToggle({
   )
 }
 
-function Report({ research }: { research: Research }) {
+function Report({
+  research,
+  employeeCount,
+}: {
+  research: Research
+  employeeCount: number | null
+}) {
   return (
     <div className="mt-[6px] max-w-[72ch] border-l-2 border-line pl-3">
       <p className="text-[12px] text-mute tabular-nums">
-        {research.company} · 調查日期 {fmtDay(research.finished_at)}
+        {research.company} · 調查日期 {fmtDay(research.finished_at)} · 員工數{' '}
+        {employeeCount === null ? '104 未提供' : `${employeeCount.toLocaleString()} 人`}
       </p>
       {research.report?.items.map((item) => (
         <section key={item.key} className="mt-[7px]">

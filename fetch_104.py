@@ -5,6 +5,7 @@
 
     pipeline.py      -> search / fetch_detail / DROP_FIELDS / SLEEP_SECONDS
     build_dataset.py -> fetch_detail / DROP_FIELDS / SLEEP_SECONDS
+    api.py           -> fetch_company
 """
 
 import json
@@ -14,6 +15,8 @@ import httpx
 
 SEARCH_API = "https://www.104.com.tw/jobs/search/api/jobs"
 DETAIL_API = "https://www.104.com.tw/api/jobs/{slug}"
+# 公司代碼是公司頁網址的最後一段：https://www.104.com.tw/company/{code}
+COMPANY_API = "https://www.104.com.tw/api/companies/{code}/content"
 
 HEADERS = {
     "User-Agent": "find-jobs-bot/1.0 (personal job search)",
@@ -75,3 +78,10 @@ def search(
 def fetch_detail(slug: str) -> dict:
     """單一職缺的完整內容：JD 全文、條件要求、其他條件。"""
     return get(DETAIL_API.format(slug=slug), label=f"職缺 {slug}")
+
+
+def fetch_company(company_url: str) -> dict:
+    """公司頁上的公司簡介。傳的是公司頁網址（列表的 link.cust）。
+    公司不存在也會回 200，只是欄位都是 null。"""
+    code = company_url.rstrip("/").rsplit("/", 1)[-1]
+    return get(COMPANY_API.format(code=code), label=f"公司 {code}")["data"]

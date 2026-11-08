@@ -21,8 +21,9 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
-from company_research import ResearchItem, research
+from company_research import KnownFact, ResearchItem, research
 from db import conninfo
+from fetch_104 import fetch_company
 from queries import Label, Sort, Verdict
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def get_connect() -> Connect:
     return app.state.pool.connection
 
 
-# 這張先只查一個項目，內容照 #11 的「在做什麼」
+# 預設的調查項目，內容照 #11。寫在呼叫端這邊，公司調查模組不認識它們（ADR 0002）
 RESEARCH_ITEMS = [
     ResearchItem(
         key="what_it_does",
@@ -66,7 +67,58 @@ RESEARCH_ITEMS = [
             "代工或接案的公司要說出主要客戶的類型。"
         ),
     ),
+    ResearchItem(
+        key="recent_news",
+        name="近期新聞",
+        question="這家公司一年內有哪些新聞？",
+        criteria=(
+            "只收一年內的新聞，每則都要附日期和來源網址；"
+            "主角必須是這家公司或標明的關聯實體；徵才廣告不算。"
+        ),
+    ),
+    ResearchItem(
+        key="employee_reviews",
+        name="員工評價",
+        question="員工、前員工或面試者怎麼評價這家公司？",
+        criteria=(
+            "只採公開可讀、由員工、前員工或面試者本人寫的內容；"
+            "公司自己寫的福利介紹和徵才文案不算；搜尋 1 到 2 次沒找到就回報查不到。"
+        ),
+    ),
 ]
+
+
+# 104 公司簡介裡要給 agent 看的欄位。福利（welfare）不給：那是公司自己寫的，
+# 不能當員工評價，給了反而容易被誤用
+PROFILE_FIELDS = {
+    "industryDesc": "產業",
+    "custLink": "官網",
+    "profile": "公司介紹",
+    "product": "主要商品／服務",
+}
+
+
+def company_profile(company_url: str | None) -> list[KnownFact]:
+    """104 公司簡介當已知資料，讓 agent 一開始就知道品牌和產品。
+    抓不到就不帶，調查照常進行。"""
+    if not company_url:
+        return []
+    try:
+        data = fetch_company(company_url)
+        lines = [
+            f"{label}：{data[key]}"
+            for key, label in PROFILE_FIELDS.items()
+            if data.get(key)
+        ]
+    except Exception:
+        # 連不上、回應格式不對都算，不能讓整次調查跟著失敗
+        log.exception("抓 104 公司簡介失敗：%s", company_url)
+        return []
+    if not lines:  # 公司不存在時 104 也回 200，只是欄位都是 null
+        return []
+    return [
+        KnownFact(content="104 公司簡介\n" + "\n".join(lines), source_url=company_url)
+    ]
 
 
 class LabelBody(BaseModel):
@@ -119,11 +171,13 @@ def set_star(conn: Db, slug: str, body: StarBody) -> dict:
     return _found(queries.set_star(conn, slug, body.starred), slug)
 
 
-def run_research(company: str, started_at: datetime, connect: Connect) -> None:
+def run_research(
+    company: str, started_at: datetime, connect: Connect, company_url: str | None
+) -> None:
     """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。
     出錯就存成失敗，不然會一直停在調查中、前端也沒辦法重試。"""
     try:
-        report = research(company, RESEARCH_ITEMS, [])
+        report = research(company, RESEARCH_ITEMS, company_profile(company_url))
     except Exception as err:
         log.exception("公司調查失敗：%s", company)
         with connect() as conn:
@@ -148,7 +202,13 @@ def start_research(
     已經在調查中就直接回現在的狀態，不再開一次。"""
     row = _found(queries.start_research(conn, slug), slug)
     if row.pop("started"):
-        background.add_task(run_research, row["company"], row["started_at"], connect)
+        background.add_task(
+            run_research,
+            row["company"],
+            row["started_at"],
+            connect,
+            queries.company_url(conn, slug),
+        )
     return row
 
 

@@ -5,29 +5,51 @@ DB 用真的，research() 換成假的（不打 OpenAI、Tavily）。
 TestClient 會在回應之前把背景任務跑完，所以 POST 完馬上就能檢查結果。
 """
 
+import httpx
 import psycopg
 import pytest
 
 import api
-from company_research import ItemAnswer, Report
+from company_research import ItemAnswer, KnownFact, Report
 from tests.conftest import TEST_DB_URL
 
 COMPANY = "○○科技股份有限公司"
+COMPANY_URL = "https://www.104.com.tw/company/fake0001"
 
 
 class FakeResearch:
-    """記下被要求調查哪些公司，回一份固定的報告。
-    found 設成 False 就每項都查不到；error 設成例外就直接拋出。"""
+    """記下被要求調查哪些公司、帶了哪些已知資料，回一份固定的報告。
+    found 設成 False 就每項都查不到；error 設成例外就直接拋出。
+
+    抓 104 公司簡介也換成假的：回 profile，profile_error 設成例外就直接拋出。"""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.companies: list[str] = []
+        self.known: list[list[KnownFact]] = []
         self.found = True
         self.answer = "做假的雲端服務"
         self.error: Exception | None = None
+        self.profile_urls: list[str] = []
+        self.profile = {
+            "custName": COMPANY,
+            "industryDesc": "假的軟體業",
+            "custLink": "https://example.com",
+            "profile": "我們做假的雲端服務",
+            "product": "假雲端 Pro",
+        }
+        self.profile_error: Exception | None = None
         monkeypatch.setattr(api, "research", self)
+        monkeypatch.setattr(api, "fetch_company", self.fetch_company)
+
+    def fetch_company(self, company_url: str) -> dict:
+        self.profile_urls.append(company_url)
+        if self.profile_error:
+            raise self.profile_error
+        return self.profile
 
     def __call__(self, company: str, items, known, **_) -> Report:
         self.companies.append(company)
+        self.known.append(known)
         if self.error:
             raise self.error
         return Report(
@@ -75,6 +97,14 @@ def test_not_researched_job_lists_without_status(client, add_job):
     assert job(client, "abc")["research_finished_at"] is None
 
 
+def test_list_shows_104_employee_count_or_none_when_not_given(client, add_job):
+    add_job("given", employee_count=25)
+    add_job("not_given", employee_count=0)  # 104 沒填時列表給 0
+
+    assert job(client, "given")["employee_count"] == 25
+    assert job(client, "not_given")["employee_count"] is None
+
+
 def test_research_saves_report_and_list_shows_done(client, add_job, fake):
     add_job("abc", company=COMPANY)
 
@@ -88,15 +118,50 @@ def test_research_saves_report_and_list_shows_done(client, add_job, fake):
     assert research["status"] == "done"
     assert research["model"] == "fake-model"
     assert research["finished_at"] is not None
-    [item] = research["report"]["items"]
-    assert item["key"] == "what_it_does"
-    assert item["name"] == "在做什麼"
+    items = research["report"]["items"]
+    assert [i["name"] for i in items] == ["在做什麼", "近期新聞", "員工評價"]
+    item = items[0]
     assert item["answer"] == "做假的雲端服務"
     assert item["sources"] == ["https://example.com/about"]
 
     listed = job(client, "abc")
     assert listed["research_status"] == "done"
     assert listed["research_finished_at"] is not None
+
+
+def test_104_company_profile_is_passed_as_known_fact(client, add_job, fake):
+    add_job("abc", company=COMPANY, company_url=COMPANY_URL)
+
+    client.post("/api/jobs/abc/research")
+
+    assert fake.profile_urls == [COMPANY_URL]
+    [[fact]] = fake.known
+    assert fact.source_url == COMPANY_URL
+    assert "我們做假的雲端服務" in fact.content
+    assert "假雲端 Pro" in fact.content
+
+
+def test_research_goes_on_without_known_facts_when_104_profile_fails(
+    client, add_job, fake
+):
+    add_job("abc", company=COMPANY, company_url=COMPANY_URL)
+    fake.profile_error = httpx.ConnectError("104 掛了")
+
+    client.post("/api/jobs/abc/research")
+
+    assert fake.known == [[]]
+    assert client.get("/api/jobs/abc/research").json()["status"] == "done"
+
+
+def test_empty_104_profile_is_not_passed_as_known_fact(client, add_job, fake):
+    """104 上找不到這家公司時也回 200，只是欄位都是 null。"""
+    add_job("abc", company=COMPANY, company_url=COMPANY_URL)
+    fake.profile = {"custName": None, "profile": None, "product": None}
+
+    client.post("/api/jobs/abc/research")
+
+    assert fake.known == [[]]
+    assert client.get("/api/jobs/abc/research").json()["status"] == "done"
 
 
 def test_not_found_item_is_reported_as_not_found(client, add_job, fake):
@@ -107,7 +172,7 @@ def test_not_found_item_is_reported_as_not_found(client, add_job, fake):
 
     research = client.get("/api/jobs/abc/research").json()
     assert research["status"] == "done"
-    [item] = research["report"]["items"]
+    item = research["report"]["items"][0]
     assert item["name"] == "在做什麼"
     assert item["status"] == "not_found"
     assert item["sources"] == []
@@ -203,7 +268,7 @@ def test_researching_again_replaces_old_report(client, add_job, fake):
     client.post("/api/jobs/abc/research")
 
     assert fake.companies == [COMPANY, COMPANY]
-    [item] = client.get("/api/jobs/abc/research").json()["report"]["items"]
+    item = client.get("/api/jobs/abc/research").json()["report"]["items"][0]
     assert item["answer"] == "改做假的電商"
 
 
@@ -219,7 +284,9 @@ def test_stuck_round_finishing_late_does_not_touch_new_round(
     if outcome == "failed":
         fake.error = RuntimeError("Tavily 掛了")
 
-    api.run_research(COMPANY, old_round, lambda: psycopg.connect(TEST_DB_URL))
+    api.run_research(
+        COMPANY, old_round, lambda: psycopg.connect(TEST_DB_URL), COMPANY_URL
+    )
 
     [[status, report, error]] = db.execute(
         "SELECT status, report, error FROM company_research"

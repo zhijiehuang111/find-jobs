@@ -66,6 +66,8 @@ def add_job(db: psycopg.Connection) -> Callable[..., str]:
         slug: str,
         *,
         company: str = "某某科技",
+        company_url: str = "https://www.104.com.tw/company/fake0001",
+        employee_count: int = 0,
         fit: bool = True,
         rejected: bool = False,
         human_label: str | None = None,
@@ -92,8 +94,10 @@ def add_job(db: psycopg.Connection) -> Callable[..., str]:
                 "rejected_by": "salary_monthly" if rejected else None,
                 "raw_list": Jsonb(
                     {
+                        "link": {"cust": company_url},
                         "jobName": "後端工程師",
                         "custName": company,
+                        "employeeCount": employee_count,
                         "jobAddrNoDesc": "台北市信義區",
                         "appearDate": "20261101",
                         "salaryLow": 60000,
