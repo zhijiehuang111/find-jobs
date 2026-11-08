@@ -15,6 +15,7 @@ from openai import OpenAI, pydantic_function_tool
 from openai.types.responses import FunctionToolParam
 from pydantic import BaseModel, Field, ValidationError
 
+from company_research.read_page import Reader, TavilyExtract
 from company_research.search import Searcher, TavilySearch
 
 DEFAULT_MODEL = "gpt-6-luna"
@@ -62,6 +63,10 @@ class _SearchArgs(BaseModel):
     query: str = Field(description="搜尋關鍵字")
 
 
+class _ReadPageArgs(BaseModel):
+    url: str = Field(description="要讀的網頁網址")
+
+
 class _SubmitReportArgs(BaseModel):
     items: list[ItemAnswer]
 
@@ -88,17 +93,20 @@ def _function_tool(
 
 INSTRUCTIONS = """\
 你是公司調查員。使用者會給你一家公司的全名、要調查的項目，以及已知資料。
-用 search 工具上網查，每個項目都查完之後，用 submit_report 工具交出調查報告。
+用 search 工具找相關的網頁，再用 read_page 工具讀網頁全文，
+每個項目都查完之後，用 submit_report 工具交出調查報告。
 
+- 搜尋結果只是片段，不能只看片段就下結論：要當成來源的網頁，都要先用 read_page 讀過全文。
 - 答案一律用繁體中文。
 - 每個項目的答案都要符合它的合格標準，並附上支持答案的來源網址。
-- 來源網址只能用搜尋結果裡出現過的網址，或已知資料的來源網址，不要自己編。
+- 來源網址只能用 read_page 讀過的網址，或已知資料的來源網址，不要自己編。
 - 用到母公司、集團、品牌等關聯實體的資訊時，答案裡要標明是誰的，不要當成這家公司本身的事。
 - 查不到是有效的答案：找不到符合合格標準的來源時，status 填 not_found、sources 留空，不要猜。
 """
 
 TOOLS = [
     _function_tool(_SearchArgs, "search", "上網搜尋，回傳結果的標題、網址和內容片段。"),
+    _function_tool(_ReadPageArgs, "read_page", "讀一個網頁的全文。"),
     _function_tool(
         _SubmitReportArgs, "submit_report", "交出調查報告。每個調查項目都要剛好一筆。"
     ),
@@ -188,6 +196,7 @@ def research(
     *,
     client: OpenAI | None = None,
     searcher: Searcher | None = None,
+    reader: Reader | None = None,
     model: str | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
 ) -> Report:
@@ -197,6 +206,7 @@ def research(
     """
     client = client or _default_client()
     searcher = searcher or TavilySearch()
+    reader = reader or TavilyExtract()
     model = model or os.getenv("RESEARCH_MODEL") or DEFAULT_MODEL
 
     history: list[Any] = [
@@ -262,6 +272,18 @@ def research(
                         output = json.dumps(
                             [r.model_dump() for r in results], ensure_ascii=False
                         )
+                elif fc.name == "read_page":
+                    url = _ReadPageArgs.model_validate_json(fc.arguments).url
+                    try:
+                        page = reader.read(url)
+                    except Exception as e:  # noqa: BLE001  404、被擋、逾時都算
+                        output = f"讀網頁失敗：{type(e).__name__}: {e}"
+                    else:
+                        # 轉址後的網址也算讀過
+                        seen_urls.update(
+                            {_normalize_url(url), _normalize_url(page.url)}
+                        )
+                        output = page.content
                 else:
                     output = f"沒有這個工具：{fc.name}"
             except ValidationError as e:

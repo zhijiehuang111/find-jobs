@@ -1,5 +1,5 @@
 """
-公司調查：直接呼叫 research()，LLM 和搜尋都用假的，不打任何 API。
+公司調查：直接呼叫 research()，LLM、搜尋、讀網頁都用假的，不打任何 API。
 
 假 LLM 照劇本依序回應：每一輪回傳劇本裡的下一組工具呼叫。
 """
@@ -15,6 +15,7 @@ from openai.types.responses import ResponseFunctionToolCall
 from company_research import (
     ItemAnswer,
     KnownFact,
+    Page,
     Report,
     ResearchItem,
     SearchResult,
@@ -346,4 +347,64 @@ def test_search_failure_is_sent_to_model_and_loop_continues() -> None:
 
     # 帶上錯誤類型：例外訊息是空的時候，模型至少知道是哪種錯
     assert "ConnectionError: Tavily 連不上" in tool_output(llm, failed)
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+class FakeReader:
+    """每個網址都回同一段內容，記下讀了哪些網址。"""
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.urls: list[str] = []
+
+    def read(self, url: str) -> Page:
+        self.urls.append(url)
+        return Page(url=url, content=self.content)
+
+
+def test_url_only_seen_in_read_page_counts_as_source() -> None:
+    # 搜尋結果沒有這個網址，只有讀網頁讀過它
+    about_url = "https://example.com/oo-tech/about"
+    llm = ScriptedLLM(
+        [call("read_page", url=about_url)],
+        [submit({**FOUND, "sources": [about_url]})],
+    )
+    reader = FakeReader("○○科技專營 △△ 物流管理 SaaS")
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        reader=reader,
+    )
+
+    assert reader.urls == [about_url]
+    assert report.items == [ItemAnswer(**{**FOUND, "sources": [about_url]})]
+
+
+class BrokenReader:
+    def read(self, url: str) -> Page:
+        raise RuntimeError(f"讀不到 {url}")
+
+
+def test_read_page_failure_is_sent_to_model_and_url_is_not_a_source() -> None:
+    about_url = "https://example.com/oo-tech/about"
+    failed = call("read_page", url=about_url)
+    bad = submit({**FOUND, "sources": [about_url]})
+    llm = ScriptedLLM([failed], [bad], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        reader=BrokenReader(),
+    )
+
+    assert f"RuntimeError: 讀不到 {about_url}" in tool_output(llm, failed)
+    # 沒讀到的網址不算出現過，拿來當來源會被退回
+    assert about_url in tool_output(llm, bad)
     assert report.items == [ItemAnswer(**NOT_FOUND)]
