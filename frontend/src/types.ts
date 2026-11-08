@@ -9,6 +9,8 @@ export type Job = {
   salary_low: number | null
   salary_high: number | null
   salary: string | null
+  /** 104 的員工數；104 沒填時是 null */
+  employee_count: number | null
   status: 'judged' | 'list_rejected'
   rejected_by: string | null
   fit: boolean | null

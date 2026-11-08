@@ -49,6 +49,8 @@ COLUMNS = sql.SQL("""
     (raw_list ->> 'salaryLow')::int              AS salary_low,
     (raw_list ->> 'salaryHigh')::int             AS salary_high,
     raw_detail -> 'jobDetail' ->> 'salary'       AS salary,
+    -- 104 沒填是 0（detail 那邊寫「暫不提供」），轉成 NULL
+    NULLIF((raw_list ->> 'employeeCount')::int, 0) AS employee_count,
     status,
     rejected_by,
     fit,
@@ -235,6 +237,14 @@ GET_RESEARCH = sql.SQL("""
     LEFT JOIN company_research r ON r.company = jobs.raw_list ->> 'custName'
     WHERE jobs.slug = %(slug)s
 """).format(status=RESEARCH_STATUS, error=RESEARCH_ERROR)
+
+
+def company_url(conn: Connection, slug: str) -> str | None:
+    """這筆職缺的 104 公司頁網址，抓公司簡介用。"""
+    row = conn.execute(
+        "SELECT raw_list -> 'link' ->> 'cust' FROM jobs WHERE slug = %s", (slug,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def start_research(conn: Connection, slug: str) -> dict | None:
