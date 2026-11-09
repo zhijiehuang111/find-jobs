@@ -8,6 +8,7 @@ LLM 用 Responses API，但不用伺服器端的狀態（store=False、不用 pr
 """
 
 import json
+import logging
 import os
 from typing import Any, Literal
 
@@ -17,6 +18,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from company_research.read_page import Reader, TavilyExtract
 from company_research.search import Searcher, TavilySearch
+
+# 調查過程每次工具呼叫印一行。這裡不設 handler，要不要印出來由呼叫端決定
+log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_MAX_TOOL_CALLS = 20
@@ -281,11 +285,13 @@ def research(
                     submitted = _SubmitReportArgs.model_validate_json(fc.arguments)
                     errors = _report_errors(submitted.items, items, seen_urls)
                     if not errors:
+                        log.info("[%s] #%d submit_report: 通過", company, tool_calls)
                         return report(submitted.items)
                     last_submitted = submitted.items
                     output = "報告沒通過檢查，修正後重新交：\n" + "\n".join(
                         f"- {e}" for e in errors
                     )
+                    summary = "退回：" + "；".join(errors)
                 elif fc.name == "search":
                     query = _SearchArgs.model_validate_json(fc.arguments).query
                     try:
@@ -293,24 +299,32 @@ def research(
                     except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
                         # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
                         output = f"搜尋失敗：{type(e).__name__}: {e}"
+                        summary = f"{query} → {output}"
                     else:
                         seen_urls.add(*(r.url for r in results))
                         output = json.dumps(
                             [r.model_dump() for r in results], ensure_ascii=False
                         )
+                        summary = f"{query} → {len(results)} 筆"
                 elif fc.name == "read_page":
                     url = _ReadPageArgs.model_validate_json(fc.arguments).url
                     try:
                         page = reader.read(url)
                     except Exception as e:  # noqa: BLE001  404、被擋、逾時都算
                         output = f"讀網頁失敗：{type(e).__name__}: {e}"
+                        summary = f"{url} → {output}"
                     else:
                         seen_urls.add(url)
                         output = _cut_page(page.content)
+                        summary = f"{url} → {len(page.content)} 字"
                 else:
                     output = f"沒有這個工具：{fc.name}"
+                    summary = output
             except ValidationError as e:
                 output = f"參數格式錯誤：{e}"
+                summary = "參數格式錯誤"
+
+            log.info("[%s] #%d %s: %s", company, tool_calls, fc.name, summary)
 
             history.append(
                 {
@@ -322,4 +336,10 @@ def research(
 
     # 用完工具呼叫次數還沒交出通過的報告：從最後一次交的報告裡留下通過的項目，
     # 完全沒交過就全部查不到
+    log.info(
+        "[%s] 用完 %d 次工具呼叫的上限結束，%s",
+        company,
+        max_tool_calls,
+        "最後一次交的報告被退回" if last_submitted else "沒交過報告",
+    )
     return report(_salvage(last_submitted, items, seen_urls))

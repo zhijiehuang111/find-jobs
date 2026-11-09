@@ -27,6 +27,10 @@ from fetch_104 import fetch_company
 from queries import Label, Sort, Verdict
 
 log = logging.getLogger(__name__)
+# 公司調查的過程（每次工具呼叫一行）印到 stderr，VPS 上會進 journalctl。
+# 只把 company_research 開到 INFO，其他套件（像 httpx 每個請求一行）維持 WARNING
+logging.basicConfig(format="%(levelname)s %(message)s")
+logging.getLogger("company_research").setLevel(logging.INFO)
 
 
 @asynccontextmanager

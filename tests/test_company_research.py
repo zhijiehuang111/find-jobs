@@ -5,6 +5,7 @@
 """
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -429,3 +430,34 @@ def test_long_page_is_cut_and_model_is_told() -> None:
     assert output.startswith("甲" * 15_000)
     assert "乙" not in output
     assert "20000" in output  # 告訴模型原文有多長、後面被截掉了
+
+
+def test_each_tool_call_and_how_it_ended_are_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # 調查過程只印到 log（VPS 上會進 journalctl），事後看得出次數花在哪、怎麼結束的
+    made_up = "https://example.com/made-up"
+    llm = ScriptedLLM(
+        [call("search", query="○○科技 產品"), call("read_page", url=FAKE_URL)],
+        [submit({**FOUND, "sources": [made_up]})],
+    )
+    caplog.set_level(logging.INFO, logger="company_research")
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+        reader=FakeReader("○○科技專營 △△ 物流管理 SaaS"),
+        max_tool_calls=3,
+    )
+
+    lines = caplog.messages
+    assert len(lines) == 4  # 3 次工具呼叫各一行 + 結束一行
+    assert all(line.startswith(f"[{COMPANY}]") for line in lines)
+    assert "○○科技 產品" in lines[0]
+    assert FAKE_URL in lines[1]
+    assert made_up in lines[2]  # 被退回的原因
+    assert "上限" in lines[3]
+    assert "被退回" in lines[3]  # 交過報告但沒通過，不是沒交過
