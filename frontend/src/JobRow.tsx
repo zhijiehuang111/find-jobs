@@ -1,7 +1,15 @@
 import { useState } from 'react'
 import { getResearch } from './api'
 import type { Job, Label, Research } from './types'
-import { fmtAddress, fmtDate, fmtDay, fmtRejectedBy, fmtSalary, fmtSource } from './format'
+import {
+  fmtAddress,
+  fmtDate,
+  fmtDay,
+  fmtRejectedBy,
+  fmtSalary,
+  fmtSource,
+  fmtTokens,
+} from './format'
 
 const LABELS: { value: Label; text: string; title: string }[] = [
   { value: 'yes', text: 'Y', title: '我適合這個職缺' },
@@ -276,6 +284,8 @@ function Report({
       <p className="text-[12px] text-mute tabular-nums">
         {research.company} · 調查日期 {fmtDay(research.finished_at)} · 員工數{' '}
         {employeeCount === null ? '104 未提供' : `${employeeCount.toLocaleString()} 人`}
+        {research.report &&
+          ` · ${research.report.tool_calls} 次工具呼叫 · token 輸入 ${fmtTokens(research.report.input_tokens)} / 輸出 ${fmtTokens(research.report.output_tokens)}`}
       </p>
       {research.report?.items.map((item) => (
         <section key={item.key} className="mt-[7px]">

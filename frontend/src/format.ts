@@ -69,6 +69,11 @@ export function fmtDay(iso: string | null): string {
   return new Date(iso).toLocaleDateString("sv-SE");
 }
 
+/** token 數顯示成「152k」，不到 1000 就照原數字。 */
+export function fmtTokens(n: number): string {
+  return n < 1000 ? String(n) : `${Math.round(n / 1000)}k`;
+}
+
 /** 來源網址顯示成「example.com/about」，完整網址放 hover。 */
 export function fmtSource(url: string): string {
   try {
