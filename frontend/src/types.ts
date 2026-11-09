@@ -39,11 +39,19 @@ export type ResearchAnswer = {
   sources: string[]
 }
 
+/** 欄位對齊 company_research.Report，company 和 model 外層已經有了，這裡不列 */
+export type ResearchReport = {
+  items: ResearchAnswer[]
+  tool_calls: number
+  input_tokens: number
+  output_tokens: number
+}
+
 /** GET / POST /api/jobs/{slug}/research；調查中時 report 是 null */
 export type Research = {
   company: string
   status: ResearchStatus
-  report: { items: ResearchAnswer[] } | null
+  report: ResearchReport | null
   error: string | null
   model: string | null
   started_at: string
