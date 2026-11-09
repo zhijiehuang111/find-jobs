@@ -257,6 +257,12 @@ def research(
             output_tokens=output_tokens,
         )
 
+    log.info(
+        "[%s] ===== 開始調查：%d 個項目，工具呼叫上限 %d 次 =====",
+        company,
+        len(items),
+        max_tool_calls,
+    )
     while tool_calls < max_tool_calls:
         response = client.responses.create(
             model=model,
