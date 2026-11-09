@@ -156,7 +156,7 @@ def test_each_turn_sends_full_history() -> None:
     search_output = second[len(first) + 1]
     assert search_output["type"] == "function_call_output"
     assert search_output["call_id"] == search_call.call_id
-    assert [r["url"] for r in json.loads(search_output["output"])] == [FAKE_URL]
+    assert FAKE_URL in search_output["output"]
 
 
 def test_known_facts_are_sent_to_model() -> None:
@@ -454,10 +454,101 @@ def test_each_tool_call_and_how_it_ended_are_logged(
     )
 
     lines = caplog.messages
-    assert len(lines) == 4  # 3 次工具呼叫各一行 + 結束一行
+    assert len(lines) == 5  # 開始一行 + 3 次工具呼叫各一行 + 結束一行
     assert all(line.startswith(f"[{COMPANY}]") for line in lines)
-    assert "○○科技 產品" in lines[0]
-    assert FAKE_URL in lines[1]
-    assert made_up in lines[2]  # 被退回的原因
-    assert "上限" in lines[3]
-    assert "被退回" in lines[3]  # 交過報告但沒通過，不是沒交過
+    assert "=====" in lines[0]  # 開始那行要醒目，好在 journalctl 裡找到每次調查的界線
+    assert "開始調查" in lines[0]
+    assert "○○科技 產品" in lines[1]
+    assert FAKE_URL in lines[2]
+    assert made_up in lines[3]  # 被退回的原因
+    assert "上限" in lines[4]
+    assert "被退回" in lines[4]  # 交過報告但沒通過，不是沒交過
+
+
+def tool_names(request: dict) -> list[str]:
+    return [tool["name"] for tool in request["tools"]]
+
+
+def test_after_lookup_limit_only_submit_report_is_offered() -> None:
+    # 搜尋和讀網頁用完就只給交報告的工具，模型只能拿已經查到的資料交報告
+    llm = ScriptedLLM(
+        [call("search", query="甲")],
+        [call("search", query="乙")],
+        [submit(NOT_FOUND)],
+    )
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        max_lookups=2,
+    )
+
+    assert tool_names(llm.requests[0]) == ["search", "read_page", "submit_report"]
+    assert tool_names(llm.requests[1]) == ["search", "read_page", "submit_report"]
+    assert tool_names(llm.requests[2]) == ["submit_report"]
+    assert report.items == [ItemAnswer(**NOT_FOUND)]
+
+
+def test_lookups_over_limit_in_one_turn_are_not_run_and_not_counted() -> None:
+    # 一輪平行呼叫 3 次搜尋，但查詢只剩 2 次：第 3 次不執行、不算次數，
+    # 留下來的那 1 次工具呼叫還能拿來交報告
+    over = call("search", query="丙")
+    llm = ScriptedLLM(
+        [call("search", query="甲"), call("search", query="乙"), over],
+        [submit(NOT_FOUND)],
+    )
+    search = FakeSearch([])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=search,
+        max_tool_calls=3,
+        max_lookups=2,
+    )
+
+    assert search.queries == ["甲", "乙"]
+    assert "用完" in tool_output(llm, over)  # 告訴模型為什麼沒執行
+    assert len(llm.requests) == 2  # 有第二輪，報告是模型交的，不是到上限湊出來的
+    assert report.tool_calls == 3
+
+
+def test_lookup_limit_is_told_to_model() -> None:
+    llm = ScriptedLLM([submit(NOT_FOUND)])
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        max_lookups=7,
+    )
+
+    sent = json.dumps(llm.requests[0]["input"], ensure_ascii=False)
+    assert "最多 7 次" in sent
+
+
+def test_each_lookup_result_tells_how_many_lookups_are_left() -> None:
+    # 模型自己數不可靠，每次搜尋和讀網頁的結果都直接告訴它還剩幾次
+    first = call("search", query="甲")
+    second = call("read_page", url=FAKE_URL)
+    llm = ScriptedLLM([first], [second], [submit(NOT_FOUND)])
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        reader=FakeReader("○○科技專營 △△ 物流管理 SaaS"),
+        max_lookups=2,
+    )
+
+    assert "還剩 1 次" in tool_output(llm, first)
+    assert "用完" in tool_output(llm, second)  # 最後一次就說用完了，只能交報告

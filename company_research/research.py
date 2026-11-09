@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_MAX_TOOL_CALLS = 20
+# 搜尋和讀網頁合計的上限。剩下的工具呼叫只能用來交報告，
+# 不然模型可能一路查到上限都沒交，查到的東西全部浪費
+DEFAULT_MAX_LOOKUPS = 15
 # 一頁最多給模型看幾個字元。每一輪都重送完整歷史，讀過的頁面會一直被重送，
 # 太長的頁面要截掉，不然 token 越疊越多、甚至超過 context window
 MAX_PAGE_CHARS = 15_000
@@ -118,9 +121,14 @@ TOOLS = [
         _SubmitReportArgs, "submit_report", "交出調查報告。每個調查項目都要剛好一筆。"
     ),
 ]
+LOOKUP_TOOLS = {"search", "read_page"}
+# 查詢次數用完後只給這個。不用 tool_choice 指定工具，因為換成 Ollama 不一定支援
+SUBMIT_ONLY = [tool for tool in TOOLS if tool["name"] == "submit_report"]
 
 
-def _task_text(company: str, items: list[ResearchItem], known: list[KnownFact]) -> str:
+def _task_text(
+    company: str, items: list[ResearchItem], known: list[KnownFact], max_lookups: int
+) -> str:
     lines = [f"# 公司全名\n{company}", "# 調查項目"]
     for item in items:
         lines.append(
@@ -133,6 +141,10 @@ def _task_text(company: str, items: list[ResearchItem], known: list[KnownFact]) 
             lines.append(f"- 來源：{fact.source_url}\n  {fact.content}")
     else:
         lines.append("（無）")
+    lines.append(
+        f"# 次數限制\n搜尋和讀網頁合計最多 {max_lookups} 次，"
+        "用完之後只能用 submit_report 交報告，要分配好每個項目的次數。"
+    )
     return "\n\n".join(lines)
 
 
@@ -228,6 +240,7 @@ def research(
     reader: Reader | None = None,
     model: str | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
+    max_lookups: int = DEFAULT_MAX_LOOKUPS,
 ) -> Report:
     """對一家公司跑一次公司調查，交出調查報告。
 
@@ -239,9 +252,10 @@ def research(
     model = model or os.getenv("RESEARCH_MODEL") or DEFAULT_MODEL
 
     history: list[Any] = [
-        {"role": "user", "content": _task_text(company, items, known)}
+        {"role": "user", "content": _task_text(company, items, known, max_lookups)}
     ]
     tool_calls = input_tokens = output_tokens = 0
+    lookups = 0  # 搜尋和讀網頁的次數
     # 交報告的來源只能從這次調查看過的網址裡挑
     seen_urls = _SeenUrls()
     seen_urls.add(*(fact.source_url for fact in known))
@@ -257,12 +271,19 @@ def research(
             output_tokens=output_tokens,
         )
 
+    log.info(
+        "[%s] ===== 開始調查：%d 個項目，搜尋和讀網頁最多 %d 次，工具呼叫上限 %d 次 =====",
+        company,
+        len(items),
+        max_lookups,
+        max_tool_calls,
+    )
     while tool_calls < max_tool_calls:
         response = client.responses.create(
             model=model,
             instructions=INSTRUCTIONS,
             input=history,
-            tools=TOOLS,
+            tools=TOOLS if lookups < max_lookups else SUBMIT_ONLY,
             tool_choice="required",
             store=False,
         )
@@ -278,7 +299,22 @@ def research(
         for fc in calls:
             if tool_calls >= max_tool_calls:
                 break
+            if fc.name in LOOKUP_TOOLS and lookups >= max_lookups:
+                # 同一輪平行呼叫超過查詢次數的部分：不執行也不算次數，
+                # 不然一次呼叫太多，會把留給交報告的次數吃掉
+                history.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": fc.call_id,
+                        "output": "搜尋和讀網頁的次數用完了，這次沒有執行。"
+                        "用目前查到的資料交報告。",
+                    }
+                )
+                log.info("[%s] %s: 沒執行，查詢次數用完（不算次數）", company, fc.name)
+                continue
             tool_calls += 1
+            if fc.name in LOOKUP_TOOLS:
+                lookups += 1
 
             try:
                 if fc.name == "submit_report":
@@ -325,6 +361,14 @@ def research(
                 summary = "參數格式錯誤"
 
             log.info("[%s] #%d %s: %s", company, tool_calls, fc.name, summary)
+            if fc.name in LOOKUP_TOOLS:
+                # 模型自己數歷史不可靠，每次都直接告訴它還剩幾次
+                left = max_lookups - lookups
+                if left > 0:
+                    output += f"\n\n（搜尋和讀網頁還剩 {left} 次）"
+                else:
+                    output += "\n\n（搜尋和讀網頁的次數用完了，接下來只能交報告）"
+                    log.info("[%s] 查詢次數用完，接下來只能交報告", company)
 
             history.append(
                 {
