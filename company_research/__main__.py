@@ -8,6 +8,7 @@
 """
 
 import argparse
+import logging
 
 from dotenv import load_dotenv
 
@@ -41,6 +42,9 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
+    # 調查過程印到 stderr，報告的 JSON 照樣印到 stdout
+    logging.basicConfig(format="%(message)s")
+    logging.getLogger("company_research").setLevel(logging.INFO)
     known = [KnownFact(content=c, source_url=u) for c, u in args.known]
     report = research(
         args.company, [WHAT_IT_DOES], known, max_tool_calls=args.max_tool_calls
