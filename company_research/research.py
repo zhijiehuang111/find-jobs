@@ -361,8 +361,14 @@ def research(
                 summary = "參數格式錯誤"
 
             log.info("[%s] #%d %s: %s", company, tool_calls, fc.name, summary)
-            if fc.name in LOOKUP_TOOLS and lookups == max_lookups:
-                log.info("[%s] 查詢次數用完，接下來只能交報告", company)
+            if fc.name in LOOKUP_TOOLS:
+                # 模型自己數歷史不可靠，每次都直接告訴它還剩幾次
+                left = max_lookups - lookups
+                if left > 0:
+                    output += f"\n\n（搜尋和讀網頁還剩 {left} 次）"
+                else:
+                    output += "\n\n（搜尋和讀網頁的次數用完了，接下來只能交報告）"
+                    log.info("[%s] 查詢次數用完，接下來只能交報告", company)
 
             history.append(
                 {

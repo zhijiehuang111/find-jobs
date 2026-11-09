@@ -156,7 +156,7 @@ def test_each_turn_sends_full_history() -> None:
     search_output = second[len(first) + 1]
     assert search_output["type"] == "function_call_output"
     assert search_output["call_id"] == search_call.call_id
-    assert [r["url"] for r in json.loads(search_output["output"])] == [FAKE_URL]
+    assert FAKE_URL in search_output["output"]
 
 
 def test_known_facts_are_sent_to_model() -> None:
@@ -532,3 +532,23 @@ def test_lookup_limit_is_told_to_model() -> None:
 
     sent = json.dumps(llm.requests[0]["input"], ensure_ascii=False)
     assert "最多 7 次" in sent
+
+
+def test_each_lookup_result_tells_how_many_lookups_are_left() -> None:
+    # 模型自己數不可靠，每次搜尋和讀網頁的結果都直接告訴它還剩幾次
+    first = call("search", query="甲")
+    second = call("read_page", url=FAKE_URL)
+    llm = ScriptedLLM([first], [second], [submit(NOT_FOUND)])
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        reader=FakeReader("○○科技專營 △△ 物流管理 SaaS"),
+        max_lookups=2,
+    )
+
+    assert "還剩 1 次" in tool_output(llm, first)
+    assert "用完" in tool_output(llm, second)  # 最後一次就說用完了，只能交報告
