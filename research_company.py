@@ -5,7 +5,7 @@
     uv run research_company.py "○○科技股份有限公司"
     uv run research_company.py "○○科技股份有限公司" --company-url https://www.104.com.tw/company/xxxxxxx
     uv run research_company.py "○○科技股份有限公司" --known "公司簡介…" https://example.com/profile
-    uv run research_company.py "○○科技股份有限公司" --trace trace.json   # 調查過程另外存檔
+    uv run research_company.py "○○科技股份有限公司" --trace traces/○○   # 調查過程存成 ○○.json 和 ○○.md
 
 需要 OPENAI_API_KEY、TAVILY_API_KEY；可選 RESEARCH_MODEL、RESEARCH_BASE_URL。
 """
@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from company_research import KnownFact, research
 from company_research.research import DEFAULT_MAX_TOOL_CALLS
+from company_research.trace import trace_markdown
 from research_items import company_profile, research_items
 
 
@@ -45,7 +46,8 @@ def main() -> None:
         "--trace",
         type=Path,
         metavar="FILE",
-        help="把調查過程（送給模型的完整歷史）寫成 JSON 檔",
+        help="把調查過程（送給模型的完整歷史）寫成 FILE.json（給程式讀）"
+        "和 FILE.md（給人讀）。FILE 有沒有寫 .json 都可以",
     )
     args = parser.parse_args()
     # 調查跑完才寫檔，資料夾不存在的話錢就白花了，先檢查
@@ -74,8 +76,11 @@ def main() -> None:
     )
     print(report.model_dump_json(indent=2))
     if args.trace:
-        args.trace.write_text(
+        args.trace.with_suffix(".json").write_text(
             json.dumps(report.trace, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        args.trace.with_suffix(".md").write_text(
+            trace_markdown(args.company, report.trace), encoding="utf-8"
         )
 
 
