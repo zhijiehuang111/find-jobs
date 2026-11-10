@@ -17,7 +17,9 @@ class SearchResult(BaseModel):
 
 
 class Searcher(Protocol):
-    def search(self, query: str) -> list[SearchResult]: ...
+    def search(self, query: str, sites: list[str]) -> list[SearchResult]:
+        """sites 是空的就不限定網站。"""
+        ...
 
 
 class TavilySearch:
@@ -26,8 +28,11 @@ class TavilySearch:
     def __init__(self) -> None:
         self.client = TavilyClient()
 
-    def search(self, query: str) -> list[SearchResult]:
-        response = self.client.search(query)
+    def search(self, query: str, sites: list[str]) -> list[SearchResult]:
+        if sites:
+            response = self.client.search(query, include_domains=sites)
+        else:
+            response = self.client.search(query)
         return [
             SearchResult(title=r["title"], url=r["url"], content=r["content"])
             for r in response["results"]

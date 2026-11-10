@@ -1,30 +1,22 @@
 """
 手動對一家公司跑一次公司調查，把調查報告印成 JSON。會打 OpenAI 和 Tavily（花錢）。
+查的項目跟前端按鈕一樣（research_items.py）。
 
-    uv run -m company_research "○○科技股份有限公司"
-    uv run -m company_research "○○科技股份有限公司" --known "公司簡介…" https://example.com/profile
+    uv run research_company.py "○○科技股份有限公司"
+    uv run research_company.py "○○科技股份有限公司" --known "公司簡介…" https://example.com/profile
 
 需要 OPENAI_API_KEY、TAVILY_API_KEY；可選 RESEARCH_MODEL、RESEARCH_BASE_URL。
 """
 
 import argparse
 import logging
+from datetime import datetime
 
 from dotenv import load_dotenv
 
-from company_research import KnownFact, ResearchItem, research
+from company_research import KnownFact, research
 from company_research.research import DEFAULT_MAX_TOOL_CALLS
-
-# 這張先只查一個項目，內容照 #11 的「在做什麼」
-WHAT_IT_DOES = ResearchItem(
-    key="what_it_does",
-    name="在做什麼",
-    question="這家公司的產品或服務是什麼？客戶是誰？怎麼賺錢？",
-    criteria=(
-        "要具體到產品名稱或服務內容，只寫產業類別不算；"
-        "代工或接案的公司要說出主要客戶的類型。"
-    ),
-)
+from research_items import research_items
 
 
 def main() -> None:
@@ -46,8 +38,13 @@ def main() -> None:
     logging.basicConfig(format="%(message)s")
     logging.getLogger("company_research").setLevel(logging.INFO)
     known = [KnownFact(content=c, source_url=u) for c, u in args.known]
+    today = datetime.now().astimezone().date()
     report = research(
-        args.company, [WHAT_IT_DOES], known, max_tool_calls=args.max_tool_calls
+        args.company,
+        research_items(today),
+        known,
+        max_tool_calls=args.max_tool_calls,
+        today=today,
     )
     print(report.model_dump_json(indent=2))
 

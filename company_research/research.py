@@ -10,6 +10,7 @@ LLM 用 Responses API，但不用伺服器端的狀態（store=False、不用 pr
 import json
 import logging
 import os
+from datetime import date, datetime
 from typing import Any, Literal
 
 from openai import OpenAI, pydantic_function_tool
@@ -71,6 +72,10 @@ class Report(BaseModel):
 
 class _SearchArgs(BaseModel):
     query: str = Field(description="搜尋關鍵字")
+    sites: list[str] = Field(
+        default_factory=list,
+        description="只搜這些網站的網域，例如 example.com；空的就是不限定",
+    )
 
 
 class _ReadPageArgs(BaseModel):
@@ -127,9 +132,19 @@ SUBMIT_ONLY = [tool for tool in TOOLS if tool["name"] == "submit_report"]
 
 
 def _task_text(
-    company: str, items: list[ResearchItem], known: list[KnownFact], max_lookups: int
+    company: str,
+    items: list[ResearchItem],
+    known: list[KnownFact],
+    max_lookups: int,
+    today: date,
 ) -> str:
-    lines = [f"# 公司全名\n{company}", "# 調查項目"]
+    # 模型對「現在」的印象停在訓練的時候，不告訴它的話可能把舊消息當最新的；
+    # 網頁上的「3 天前」「上個月」也要知道今天幾號才換算得出日期
+    lines = [
+        f"# 今天日期\n{today.isoformat()}",
+        f"# 公司全名\n{company}",
+        "# 調查項目",
+    ]
     for item in items:
         lines.append(
             f"- key: {item.key}\n  名稱：{item.name}\n"
@@ -241,9 +256,12 @@ def research(
     model: str | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     max_lookups: int = DEFAULT_MAX_LOOKUPS,
+    today: date | None = None,
 ) -> Report:
     """對一家公司跑一次公司調查，交出調查報告。
 
+    today 是告訴模型的今天日期，不給就是今天。呼叫端如果用日期算了合格標準
+    （例如起始日），要傳同一天進來，兩邊才對得上。
     OpenAI 呼叫失敗時直接拋出例外，由呼叫端處理。
     """
     client = client or _default_client()
@@ -252,7 +270,16 @@ def research(
     model = model or os.getenv("RESEARCH_MODEL") or DEFAULT_MODEL
 
     history: list[Any] = [
-        {"role": "user", "content": _task_text(company, items, known, max_lookups)}
+        {
+            "role": "user",
+            "content": _task_text(
+                company,
+                items,
+                known,
+                max_lookups,
+                today or datetime.now().astimezone().date(),
+            ),
+        }
     ]
     tool_calls = input_tokens = output_tokens = 0
     lookups = 0  # 搜尋和讀網頁的次數
@@ -329,19 +356,23 @@ def research(
                     )
                     summary = "退回：" + "；".join(errors)
                 elif fc.name == "search":
-                    query = _SearchArgs.model_validate_json(fc.arguments).query
+                    args = _SearchArgs.model_validate_json(fc.arguments)
+                    # log 用，有限定網站的話一起印出來
+                    label = args.query + (
+                        f"（只搜 {', '.join(args.sites)}）" if args.sites else ""
+                    )
                     try:
-                        results = searcher.search(query)
+                        results = searcher.search(args.query, args.sites)
                     except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
                         # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
                         output = f"搜尋失敗：{type(e).__name__}: {e}"
-                        summary = f"{query} → {output}"
+                        summary = f"{label} → {output}"
                     else:
                         seen_urls.add(*(r.url for r in results))
                         output = json.dumps(
                             [r.model_dump() for r in results], ensure_ascii=False
                         )
-                        summary = f"{query} → {len(results)} 筆"
+                        summary = f"{label} → {len(results)} 筆"
                 elif fc.name == "read_page":
                     url = _ReadPageArgs.model_validate_json(fc.arguments).url
                     try:

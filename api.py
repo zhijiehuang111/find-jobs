@@ -12,7 +12,7 @@ basic auth。要跟 Postgres 一樣只綁 127.0.0.1，得自己指定 --host。
 import logging
 from collections.abc import AsyncGenerator, Callable, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
@@ -21,10 +21,11 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
-from company_research import KnownFact, ResearchItem, research
+from company_research import KnownFact, research
 from db import conninfo
 from fetch_104 import fetch_company
 from queries import Label, Sort, Verdict
+from research_items import research_items
 
 log = logging.getLogger(__name__)
 # 公司調查的過程（每次工具呼叫一行）印到 stderr，VPS 上會進 journalctl。
@@ -58,38 +59,6 @@ Connect = Callable[[], AbstractContextManager[Connection]]
 def get_connect() -> Connect:
     """給背景任務自己開連線用。request 的那條在回應送出後就還回 pool 了，不能留給它。"""
     return app.state.pool.connection
-
-
-# 預設的調查項目，內容照 #11。寫在呼叫端這邊，公司調查模組不認識它們（ADR 0002）
-RESEARCH_ITEMS = [
-    ResearchItem(
-        key="what_it_does",
-        name="在做什麼",
-        question="這家公司的產品或服務是什麼？客戶是誰？怎麼賺錢？",
-        criteria=(
-            "要具體到產品名稱或服務內容，只寫產業類別不算；"
-            "代工或接案的公司要說出主要客戶的類型。"
-        ),
-    ),
-    ResearchItem(
-        key="recent_news",
-        name="近期新聞",
-        question="這家公司一年內有哪些新聞？",
-        criteria=(
-            "只收一年內的新聞，每則都要附日期和來源網址；"
-            "主角必須是這家公司或標明的關聯實體；徵才廣告不算。"
-        ),
-    ),
-    ResearchItem(
-        key="employee_reviews",
-        name="員工評價",
-        question="員工、前員工或面試者怎麼評價這家公司？",
-        criteria=(
-            "只採公開可讀、由員工、前員工或面試者本人寫的內容；"
-            "公司自己寫的福利介紹和徵才文案不算；搜尋 1 到 2 次沒找到就回報查不到。"
-        ),
-    ),
-]
 
 
 # 104 公司簡介裡要給 agent 看的欄位。福利（welfare）不給：那是公司自己寫的，
@@ -175,13 +144,20 @@ def set_star(conn: Db, slug: str, body: StarBody) -> dict:
     return _found(queries.set_star(conn, slug, body.starred), slug)
 
 
+def _today() -> date:
+    return datetime.now().astimezone().date()
+
+
 def run_research(
     company: str, started_at: datetime, connect: Connect, company_url: str | None
 ) -> None:
     """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。
     出錯就存成失敗，不然會一直停在調查中、前端也沒辦法重試。"""
     try:
-        report = research(company, RESEARCH_ITEMS, company_profile(company_url))
+        today = _today()
+        report = research(
+            company, research_items(today), company_profile(company_url), today=today
+        )
     except Exception as err:
         log.exception("公司調查失敗：%s", company)
         with connect() as conn:
@@ -223,7 +199,7 @@ def get_research(conn: Db, slug: str) -> dict:
     if row["company"] is None:
         raise HTTPException(status_code=404, detail=f"這家公司還沒調查：{slug}")
     if row["report"]:
-        names = {item.key: item.name for item in RESEARCH_ITEMS}
+        names = {item.key: item.name for item in research_items(_today())}
         for item in row["report"]["items"]:
             item["name"] = names.get(item["key"], item["key"])
     return row
