@@ -3,6 +3,7 @@
 查的項目跟前端按鈕一樣（research_items.py）。
 
     uv run research_company.py "○○科技股份有限公司"
+    uv run research_company.py "○○科技股份有限公司" --company-url https://www.104.com.tw/company/xxxxxxx
     uv run research_company.py "○○科技股份有限公司" --known "公司簡介…" https://example.com/profile
     uv run research_company.py "○○科技股份有限公司" --trace trace.json   # 調查過程另外存檔
 
@@ -19,12 +20,18 @@ from dotenv import load_dotenv
 
 from company_research import KnownFact, research
 from company_research.research import DEFAULT_MAX_TOOL_CALLS
-from research_items import research_items
+from research_items import company_profile, research_items
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="對一家公司跑一次公司調查")
     parser.add_argument("company", help="公司全名")
+    parser.add_argument(
+        "--company-url",
+        metavar="URL",
+        help="104 公司頁網址，像 https://www.104.com.tw/company/xxxxxxx"
+        "（後面不要帶 ?jobsource 那些）。會跟按鈕一樣抓公司簡介當已知資料",
+    )
     parser.add_argument(
         "--known",
         nargs=2,
@@ -41,12 +48,22 @@ def main() -> None:
         help="把調查過程（送給模型的完整歷史）寫成 JSON 檔",
     )
     args = parser.parse_args()
+    # 調查跑完才寫檔，資料夾不存在的話錢就白花了，先檢查
+    if args.trace and not args.trace.parent.is_dir():
+        parser.error(f"--trace 的資料夾不存在：{args.trace.parent}")
 
     load_dotenv()
     # 調查過程印到 stderr，報告的 JSON 照樣印到 stdout
     logging.basicConfig(format="%(message)s")
     logging.getLogger("company_research").setLevel(logging.INFO)
     known = [KnownFact(content=c, source_url=u) for c, u in args.known]
+    if args.company_url:
+        profile = company_profile(args.company_url)
+        # 按鈕抓不到會照常調查；CLI 是特地給了網址，抓不到多半是網址貼錯，
+        # 不停下來的話會花錢跑出一份沒有 104 簡介的結果
+        if not profile:
+            parser.error(f"沒抓到 104 公司簡介，檢查網址：{args.company_url}")
+        known += profile
     today = datetime.now().astimezone().date()
     report = research(
         args.company,
