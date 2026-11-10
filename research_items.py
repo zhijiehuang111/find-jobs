@@ -1,13 +1,17 @@
 """
-find-jobs 的公司調查項目：查哪幾項、合格標準是什麼。
+find-jobs 交給公司調查的東西：查哪幾項、合格標準是什麼，和當成已知資料的 104 公司簡介。
 
 寫在呼叫端這邊，公司調查模組不認識它們（ADR 0002）。
-api.py 的按鈕和 research_company.py 的 CLI 都用這份，兩邊查的一樣。
+api.py 的按鈕和 research_company.py 的 CLI 都用這份，兩邊給模型的資料一樣。
 """
 
+import logging
 from datetime import date
 
-from company_research import ResearchItem
+from company_research import KnownFact, ResearchItem
+from fetch_104 import fetch_company
+
+log = logging.getLogger(__name__)
 
 
 def research_items(today: date) -> list[ResearchItem]:
@@ -57,4 +61,37 @@ def research_items(today: date) -> list[ResearchItem]:
                 "公司自己寫的福利介紹和徵才文案不算；搜 2 次沒找到就回報查不到。"
             ),
         ),
+    ]
+
+
+# 104 公司簡介裡要給 agent 看的欄位。福利（welfare）不給：那是公司自己寫的，
+# 不能當員工評價，給了反而容易被誤用
+PROFILE_FIELDS = {
+    "industryDesc": "產業",
+    "custLink": "官網",
+    "profile": "公司介紹",
+    "product": "主要商品／服務",
+}
+
+
+def company_profile(company_url: str | None) -> list[KnownFact]:
+    """104 公司簡介當已知資料，讓 agent 一開始就知道品牌和產品。
+    抓不到就不帶，調查照常進行。"""
+    if not company_url:
+        return []
+    try:
+        data = fetch_company(company_url)
+        lines = [
+            f"{label}：{data[key]}"
+            for key, label in PROFILE_FIELDS.items()
+            if data.get(key)
+        ]
+    except Exception:
+        # 連不上、回應格式不對都算，不能讓整次調查跟著失敗
+        log.exception("抓 104 公司簡介失敗：%s", company_url)
+        return []
+    if not lines:  # 公司不存在時 104 也回 200，只是欄位都是 null
+        return []
+    return [
+        KnownFact(content="104 公司簡介\n" + "\n".join(lines), source_url=company_url)
     ]

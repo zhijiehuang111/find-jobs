@@ -142,7 +142,48 @@ def test_search_then_submit_returns_report() -> None:
         tool_calls=2,
         input_tokens=200,
         output_tokens=20,
+        trace=report.trace,  # trace 另外測
     )
+
+
+def test_report_carries_trace_of_whole_research() -> None:
+    # trace 是模型看到和做的全部，事後回頭查「為什麼這樣答」
+    search_call = call("search", query="○○科技 產品")
+    llm = ScriptedLLM([search_call], [submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([SEARCH_HIT]),
+    )
+
+    task, searched, search_output, submitted = report.trace
+    assert task["role"] == "user"
+    assert COMPANY in task["content"]
+    assert searched["name"] == "search"
+    assert searched["arguments"] == search_call.arguments
+    assert search_output["type"] == "function_call_output"
+    assert FAKE_URL in search_output["output"]
+    assert submitted["name"] == "submit_report"
+    json.dumps(report.trace)  # 寫得成 JSON 檔
+
+
+def test_trace_is_left_out_when_report_is_dumped() -> None:
+    # 報告存進 DB、回給前端都用 model_dump，trace 動輒幾百 KB，不能跟著進去
+    llm = ScriptedLLM([submit(NOT_FOUND)])
+
+    report = research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+    )
+
+    assert report.trace
+    assert "trace" not in report.model_dump()
 
 
 def test_search_can_be_limited_to_sites(caplog: pytest.LogCaptureFixture) -> None:

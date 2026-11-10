@@ -10,6 +10,7 @@ import psycopg
 import pytest
 
 import api
+import research_items
 from company_research import ItemAnswer, KnownFact, Report
 from tests.conftest import TEST_DB_URL
 
@@ -39,7 +40,7 @@ class FakeResearch:
         }
         self.profile_error: Exception | None = None
         monkeypatch.setattr(api, "research", self)
-        monkeypatch.setattr(api, "fetch_company", self.fetch_company)
+        monkeypatch.setattr(research_items, "fetch_company", self.fetch_company)
 
     def fetch_company(self, company_url: str) -> dict:
         self.profile_urls.append(company_url)
