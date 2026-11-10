@@ -68,6 +68,10 @@ class Report(BaseModel):
     tool_calls: int
     input_tokens: int
     output_tokens: int
+    # 這次調查送給模型的完整歷史：任務、每次工具呼叫和回應、被退回的報告。
+    # 事後回頭查「為什麼這樣答」用。model_dump 不會帶它，存 DB 的報告不會被撐大，
+    # 要的人自己拿 report.trace
+    trace: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
 
 
 class _SearchArgs(BaseModel):
@@ -240,6 +244,11 @@ def _cut_page(content: str) -> str:
     )
 
 
+def _plain(entry: Any) -> dict[str, Any]:
+    """歷史裡模型的輸出是 OpenAI SDK 的物件，轉成一般的 dict 才能寫成 JSON。"""
+    return entry.model_dump(mode="json") if isinstance(entry, BaseModel) else entry
+
+
 def _default_client() -> OpenAI:
     # base_url 沒設就是 OpenAI；要換 Ollama 時設 RESEARCH_BASE_URL
     return OpenAI(base_url=os.getenv("RESEARCH_BASE_URL") or None)
@@ -296,6 +305,7 @@ def research(
             tool_calls=tool_calls,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            trace=[_plain(entry) for entry in history],
         )
 
     log.info(
