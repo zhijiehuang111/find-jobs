@@ -6,6 +6,7 @@
 
 import json
 import logging
+from datetime import date
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -176,6 +177,23 @@ def test_known_facts_are_sent_to_model() -> None:
     sent = json.dumps(llm.requests[0]["input"], ensure_ascii=False)
     assert known.content in sent
     assert known.source_url in sent
+
+
+def test_today_is_sent_to_model() -> None:
+    # 「一年內」「三年內」要靠今天的日期算，模型自己不知道今天幾號
+    llm = ScriptedLLM([submit(NOT_FOUND)])
+
+    research(
+        COMPANY,
+        [WHAT_IT_DOES],
+        [],
+        client=llm.as_client(),
+        searcher=FakeSearch([]),
+        today=date(2030, 1, 2),
+    )
+
+    sent = json.dumps(llm.requests[0]["input"], ensure_ascii=False)
+    assert "2030-01-02" in sent
 
 
 def test_stops_at_tool_call_limit_with_all_not_found() -> None:

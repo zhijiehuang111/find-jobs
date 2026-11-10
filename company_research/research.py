@@ -10,6 +10,7 @@ LLM 用 Responses API，但不用伺服器端的狀態（store=False、不用 pr
 import json
 import logging
 import os
+from datetime import date, datetime
 from typing import Any, Literal
 
 from openai import OpenAI, pydantic_function_tool
@@ -127,9 +128,18 @@ SUBMIT_ONLY = [tool for tool in TOOLS if tool["name"] == "submit_report"]
 
 
 def _task_text(
-    company: str, items: list[ResearchItem], known: list[KnownFact], max_lookups: int
+    company: str,
+    items: list[ResearchItem],
+    known: list[KnownFact],
+    max_lookups: int,
+    today: date,
 ) -> str:
-    lines = [f"# 公司全名\n{company}", "# 調查項目"]
+    # 模型不知道今天幾號，合格標準寫「一年內」這種的要靠它算
+    lines = [
+        f"# 今天日期\n{today.isoformat()}",
+        f"# 公司全名\n{company}",
+        "# 調查項目",
+    ]
     for item in items:
         lines.append(
             f"- key: {item.key}\n  名稱：{item.name}\n"
@@ -241,10 +251,11 @@ def research(
     model: str | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     max_lookups: int = DEFAULT_MAX_LOOKUPS,
+    today: date | None = None,
 ) -> Report:
     """對一家公司跑一次公司調查，交出調查報告。
 
-    OpenAI 呼叫失敗時直接拋出例外，由呼叫端處理。
+    today 不給就是今天，測試用。OpenAI 呼叫失敗時直接拋出例外，由呼叫端處理。
     """
     client = client or _default_client()
     searcher = searcher or TavilySearch()
@@ -252,7 +263,16 @@ def research(
     model = model or os.getenv("RESEARCH_MODEL") or DEFAULT_MODEL
 
     history: list[Any] = [
-        {"role": "user", "content": _task_text(company, items, known, max_lookups)}
+        {
+            "role": "user",
+            "content": _task_text(
+                company,
+                items,
+                known,
+                max_lookups,
+                today or datetime.now().astimezone().date(),
+            ),
+        }
     ]
     tool_calls = input_tokens = output_tokens = 0
     lookups = 0  # 搜尋和讀網頁的次數
