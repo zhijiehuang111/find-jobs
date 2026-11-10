@@ -89,14 +89,16 @@ def tool_output(llm: ScriptedLLM, fc: ResponseFunctionToolCall) -> str:
 
 
 class FakeSearch:
-    """每次搜尋都回同一組結果，記下查了什麼。"""
+    """每次搜尋都回同一組結果，記下查了什麼、限定了哪些網站。"""
 
     def __init__(self, results: list[SearchResult]) -> None:
         self.results = results
         self.queries: list[str] = []
+        self.sites: list[list[str]] = []
 
-    def search(self, query: str) -> list[SearchResult]:
+    def search(self, query: str, sites: list[str]) -> list[SearchResult]:
         self.queries.append(query)
+        self.sites.append(sites)
         return self.results
 
 
@@ -141,6 +143,23 @@ def test_search_then_submit_returns_report() -> None:
         input_tokens=200,
         output_tokens=20,
     )
+
+
+def test_search_can_be_limited_to_sites(caplog: pytest.LogCaptureFixture) -> None:
+    llm = ScriptedLLM(
+        [call("search", query="○○ 工作", sites=["example.org"])],
+        [call("search", query="○○科技 產品")],
+        [submit(NOT_FOUND)],
+    )
+    search = FakeSearch([SEARCH_HIT])
+    caplog.set_level(logging.INFO, logger="company_research")
+
+    research(COMPANY, [WHAT_IT_DOES], [], client=llm.as_client(), searcher=search)
+
+    # 沒給 sites 就是不限定
+    assert search.sites == [["example.org"], []]
+    # log 看得出有沒有限定網站
+    assert "example.org" in caplog.messages[1]
 
 
 def test_each_turn_sends_full_history() -> None:
@@ -348,7 +367,7 @@ def test_at_limit_keeps_passing_items_from_last_rejected_report() -> None:
 
 
 class BrokenSearch:
-    def search(self, query: str) -> list[SearchResult]:
+    def search(self, query: str, sites: list[str]) -> list[SearchResult]:
         raise ConnectionError("Tavily 連不上")
 
 

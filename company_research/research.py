@@ -72,6 +72,10 @@ class Report(BaseModel):
 
 class _SearchArgs(BaseModel):
     query: str = Field(description="搜尋關鍵字")
+    sites: list[str] = Field(
+        default_factory=list,
+        description="只搜這些網站的網域，例如 example.com；空的就是不限定",
+    )
 
 
 class _ReadPageArgs(BaseModel):
@@ -349,19 +353,23 @@ def research(
                     )
                     summary = "退回：" + "；".join(errors)
                 elif fc.name == "search":
-                    query = _SearchArgs.model_validate_json(fc.arguments).query
+                    args = _SearchArgs.model_validate_json(fc.arguments)
+                    # log 用，有限定網站的話一起印出來
+                    label = args.query + (
+                        f"（只搜 {', '.join(args.sites)}）" if args.sites else ""
+                    )
                     try:
-                        results = searcher.search(query)
+                        results = searcher.search(args.query, args.sites)
                     except Exception as e:  # noqa: BLE001  網路、額度、rate limit 都算
                         # 搜尋失敗交給模型決定要不要重試；OpenAI 的失敗才往外拋
                         output = f"搜尋失敗：{type(e).__name__}: {e}"
-                        summary = f"{query} → {output}"
+                        summary = f"{label} → {output}"
                     else:
                         seen_urls.add(*(r.url for r in results))
                         output = json.dumps(
                             [r.model_dump() for r in results], ensure_ascii=False
                         )
-                        summary = f"{query} → {len(results)} 筆"
+                        summary = f"{label} → {len(results)} 筆"
                 elif fc.name == "read_page":
                     url = _ReadPageArgs.model_validate_json(fc.arguments).url
                     try:
