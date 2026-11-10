@@ -12,7 +12,7 @@ basic auth。要跟 Postgres 一樣只綁 127.0.0.1，得自己指定 --host。
 import logging
 from collections.abc import AsyncGenerator, Callable, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
@@ -21,10 +21,11 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 import queries
-from company_research import KnownFact, ResearchItem, research
+from company_research import KnownFact, research
 from db import conninfo
 from fetch_104 import fetch_company
 from queries import Label, Sort, Verdict
+from research_items import research_items
 
 log = logging.getLogger(__name__)
 # 公司調查的過程（每次工具呼叫一行）印到 stderr，VPS 上會進 journalctl。
@@ -58,47 +59,6 @@ Connect = Callable[[], AbstractContextManager[Connection]]
 def get_connect() -> Connect:
     """給背景任務自己開連線用。request 的那條在回應送出後就還回 pool 了，不能留給它。"""
     return app.state.pool.connection
-
-
-# 預設的調查項目，內容照 #11。寫在呼叫端這邊，公司調查模組不認識它們（ADR 0002）
-RESEARCH_ITEMS = [
-    ResearchItem(
-        key="what_it_does",
-        name="在做什麼",
-        question="這家公司賣什麼、賣給誰、怎麼賺錢？",
-        criteria=(
-            "用沒有這個產業背景的人也看得懂的白話寫，專有名詞要順便解釋。"
-            "固定分三行：「一句話」不超過 40 字，說清楚賣什麼給誰；"
-            "「客戶」說主要客戶的類型，代工或接案的公司要說是哪一類客戶；"
-            "「怎麼賺錢」說主要收入來源，例如賣產品、訂閱、專案、代工。"
-            "總共不超過 150 字，不列產品清單，不寫沿革和願景。"
-        ),
-    ),
-    ResearchItem(
-        key="recent_news",
-        name="近期動向",
-        question="這家公司一年內有哪些看得出營運狀況的消息？",
-        criteria=(
-            "只收一年內、主角是這家公司或標明的關聯實體的消息，類型限："
-            "營收或獲利的變化；募資、併購、上市櫃；裁員、組織調整或大量擴編；"
-            "重大合作或主力產品上市。得獎、公益、行銷活動、徵才廣告不算。"
-            "最多 3 則，挑最能看出公司現在好不好的，每則一句話，附日期和來源。"
-        ),
-    ),
-    ResearchItem(
-        key="employee_reviews",
-        name="員工評價",
-        question="在 PTT 上，員工、前員工或面試者怎麼評價這家公司？",
-        criteria=(
-            "只用 PTT：search 的 sites 填 ptt.cc，"
-            "用一般人稱呼這家公司的簡稱搜「簡稱 工作」「簡稱 面試」。"
-            "只收發文日期在三年內的文章，要用 read_page 讀全文，推文也算。"
-            "整理成重點，有寫到才列：薪資、工時加班、團隊氛圍和管理、面試流程；"
-            "每點附發文日期，發文者有寫職位的話也標出來。"
-            "公司自己寫的福利介紹和徵才文案不算；搜 2 次沒找到就回報查不到。"
-        ),
-    ),
-]
 
 
 # 104 公司簡介裡要給 agent 看的欄位。福利（welfare）不給：那是公司自己寫的，
@@ -184,13 +144,20 @@ def set_star(conn: Db, slug: str, body: StarBody) -> dict:
     return _found(queries.set_star(conn, slug, body.starred), slug)
 
 
+def _today() -> date:
+    return datetime.now().astimezone().date()
+
+
 def run_research(
     company: str, started_at: datetime, connect: Connect, company_url: str | None
 ) -> None:
     """背景跑公司調查。調查要跑好幾分鐘，連線等報告出來再開，不要一路佔著。
     出錯就存成失敗，不然會一直停在調查中、前端也沒辦法重試。"""
     try:
-        report = research(company, RESEARCH_ITEMS, company_profile(company_url))
+        today = _today()
+        report = research(
+            company, research_items(today), company_profile(company_url), today=today
+        )
     except Exception as err:
         log.exception("公司調查失敗：%s", company)
         with connect() as conn:
@@ -232,7 +199,7 @@ def get_research(conn: Db, slug: str) -> dict:
     if row["company"] is None:
         raise HTTPException(status_code=404, detail=f"這家公司還沒調查：{slug}")
     if row["report"]:
-        names = {item.key: item.name for item in RESEARCH_ITEMS}
+        names = {item.key: item.name for item in research_items(_today())}
         for item in row["report"]["items"]:
             item["name"] = names.get(item["key"], item["key"])
     return row
