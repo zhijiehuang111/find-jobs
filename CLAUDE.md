@@ -15,7 +15,9 @@
 | `prune_closed.py` | 收件匣裡已下架的職缺刪掉 |
 | `build_dataset.py` / `eval.py` | 考卷（`labels.tsv` → `dataset.jsonl`）和評分 |
 | `api.py` + `queries.py` | FastAPI；SQL 全部在 `queries.py`，回傳一律 dict |
-| `company_research/` | 公司調查：`research()` 是唯一對外的 function，不 import find-jobs（ADR 0002）。`uv run -m company_research "公司全名"` 手動跑一次 |
+| `company_research/` | 公司調查：`research()` 是唯一對外的 function，不 import find-jobs（ADR 0002）。沒有進入點，只被 import |
+| `research_items.py` | find-jobs 要查的調查項目和合格標準，起始日每次調查時算。`api.py` 和 `research_company.py` 共用 |
+| `research_company.py` | `uv run research_company.py "公司全名"` 手動跑一次公司調查，查的跟前端按鈕一樣 |
 | `db.py` | `.env` → 連線字串，`api.py`（pool）和 `pipeline.connect()`（單條）共用 |
 | `frontend/` | React + TS + Tailwind，dev 時 `/api` proxy 到 :8000 |
 | `find_jobs.sql` | 完整的最新 schema（新建 DB 用） |
@@ -39,8 +41,8 @@ cd frontend && npm run lint && npm run build                           # 前端 
 
 ## 會花錢 / 有副作用的
 
-- **打 OpenAI（花錢）**：`pipeline.py`、`rejudge.py`、`eval.py`、`uv run -m company_research`
-- **打 Tavily（花錢）**：`uv run -m company_research`
+- **打 OpenAI（花錢）**：`pipeline.py`、`rejudge.py`、`eval.py`、`research_company.py`
+- **打 Tavily（花錢）**：`research_company.py`
 - **打 104 API**：`pipeline.py`、`prune_closed.py`、`build_dataset.py`、`api.py` 的「調查公司」（抓公司簡介）
 - **寫 DB**：`pipeline.py`、`rejudge.py`、`prune_closed.py --apply`
 - 先看範圍再跑：`rejudge.py --dry-run`、`prune_closed.py`（不加 `--apply` 只列出）、`eval.py 10`（只跑 10 題）
