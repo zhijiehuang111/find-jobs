@@ -4,13 +4,16 @@
 
     uv run research_company.py "○○科技股份有限公司"
     uv run research_company.py "○○科技股份有限公司" --known "公司簡介…" https://example.com/profile
+    uv run research_company.py "○○科技股份有限公司" --trace trace.json   # 調查過程另外存檔
 
 需要 OPENAI_API_KEY、TAVILY_API_KEY；可選 RESEARCH_MODEL、RESEARCH_BASE_URL。
 """
 
 import argparse
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -31,6 +34,12 @@ def main() -> None:
         help="已知資料和它的來源網址，可以給多次",
     )
     parser.add_argument("--max-tool-calls", type=int, default=DEFAULT_MAX_TOOL_CALLS)
+    parser.add_argument(
+        "--trace",
+        type=Path,
+        metavar="FILE",
+        help="把調查過程（送給模型的完整歷史）寫成 JSON 檔",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -47,6 +56,10 @@ def main() -> None:
         today=today,
     )
     print(report.model_dump_json(indent=2))
+    if args.trace:
+        args.trace.write_text(
+            json.dumps(report.trace, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 if __name__ == "__main__":
