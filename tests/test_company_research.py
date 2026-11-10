@@ -199,7 +199,7 @@ def test_known_facts_are_sent_to_model() -> None:
 
 
 def test_today_is_sent_to_model() -> None:
-    # 「一年內」「三年內」要靠今天的日期算，模型自己不知道今天幾號
+    # 模型自己不知道今天幾號，任務裡要寫出來
     llm = ScriptedLLM([submit(NOT_FOUND)])
 
     research(

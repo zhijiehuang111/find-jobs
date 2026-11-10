@@ -138,7 +138,8 @@ def _task_text(
     max_lookups: int,
     today: date,
 ) -> str:
-    # 模型不知道今天幾號，合格標準寫「一年內」這種的要靠它算
+    # 模型對「現在」的印象停在訓練的時候，不告訴它的話可能把舊消息當最新的；
+    # 網頁上的「3 天前」「上個月」也要知道今天幾號才換算得出日期
     lines = [
         f"# 今天日期\n{today.isoformat()}",
         f"# 公司全名\n{company}",
@@ -259,7 +260,9 @@ def research(
 ) -> Report:
     """對一家公司跑一次公司調查，交出調查報告。
 
-    today 不給就是今天，測試用。OpenAI 呼叫失敗時直接拋出例外，由呼叫端處理。
+    today 是告訴模型的今天日期，不給就是今天。呼叫端如果用日期算了合格標準
+    （例如起始日），要傳同一天進來，兩邊才對得上。
+    OpenAI 呼叫失敗時直接拋出例外，由呼叫端處理。
     """
     client = client or _default_client()
     searcher = searcher or TavilySearch()
