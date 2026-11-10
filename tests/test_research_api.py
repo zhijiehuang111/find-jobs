@@ -119,7 +119,7 @@ def test_research_saves_report_and_list_shows_done(client, add_job, fake):
     assert research["model"] == "fake-model"
     assert research["finished_at"] is not None
     items = research["report"]["items"]
-    assert [i["name"] for i in items] == ["在做什麼", "近期新聞", "員工評價"]
+    assert [i["name"] for i in items] == ["在做什麼", "近期動向", "員工評價"]
     item = items[0]
     assert item["answer"] == "做假的雲端服務"
     assert item["sources"] == ["https://example.com/about"]
