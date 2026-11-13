@@ -2,7 +2,8 @@
 
 import json
 
-from company_research.trace import trace_markdown
+from company_research import ItemAnswer, Report
+from company_research.trace import research_markdown, trace_markdown
 
 TASK = "# 今天日期\n2030-01-02\n\n# 公司全名\n○○科技股份有限公司"
 HIT = {
@@ -106,3 +107,41 @@ def test_code_fence_in_content_does_not_end_the_block_early() -> None:
     start = md.index(PAGE)
     fence_line = md[: start - 1].rsplit("\n", 1)[-1]
     assert fence_line.startswith("````")
+
+
+def report() -> Report:
+    return Report(
+        company="○○科技股份有限公司",
+        items=[
+            ItemAnswer(
+                key="what_it_does",
+                status="found",
+                answer=ANSWER,
+                sources=[HIT["url"]],
+            ),
+            ItemAnswer(key="news", status="not_found", answer="查不到", sources=[]),
+        ],
+        model="fake-model",
+        tool_calls=4,
+        input_tokens=123456,
+        output_tokens=789,
+        trace=TRACE,
+    )
+
+
+def test_final_report_and_cost_come_before_the_trace() -> None:
+    # 打 pass/fail 看的是最終報告（前端那份），放最上面，不用跳到最後一個 submit_report
+    md = research_markdown(report())
+
+    final = md.index("## 最終報告")
+    assert final < md.index(ANSWER) < md.index("## 任務")
+    assert final < md.index("查不到") < md.index("## 任務")
+    for text in ["fake-model", "4", "123456", "789"]:
+        assert text in md[: md.index("## 任務")], text
+
+
+def test_trace_is_still_complete_below_the_report() -> None:
+    md = research_markdown(report())
+
+    assert md.startswith("# ○○科技股份有限公司\n")
+    assert trace_markdown("x", TRACE).split("\n", 1)[1] in md
