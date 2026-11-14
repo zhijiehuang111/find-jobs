@@ -21,9 +21,11 @@ flowchart TB
   detail --> llm["LLM judge<br/>rules + profile + JD<br/>→ fit / reason"]
   llm --> db[("Postgres<br/>raw JSON, fit, reason<br/>prompt/profile hash, model")]
   rej --> db
+  db -->|關鍵字都跑完| prune["清掉已下架<br/>收件匣重抓 104 detail, 下架的刪掉<br/>標過 / 收藏的不動"]
+  prune -->|刪除| db
   db --> api[FastAPI] --> ui["前端 4 tabs<br/>收件匣 / 收藏 / 不適合 / 規則刷掉"]
   ui -->|human_label + 理由| db
-  db -. 挑題 .-> exam[固定考卷約 70 題]
+  db -. 挑題 .-> exam[固定考卷 100 題]
   exam -. 離線跑同一套 judge, 不寫 DB .-> eval["eval: accuracy / precision / recall"]
   eval -. 新版 OK, 手動跑 .-> rejudge["rejudge.py<br/>讀 raw_detail 重判還沒標的, 不打 104 API"] -.-> db
 ```
@@ -37,21 +39,6 @@ React + TypeScript + Tailwind｜OpenAI Responses API
 
 ## Eval
 
-目前約 70 筆固定職缺 ＋ 我標註的答案，存成 `dataset.jsonl` 用 git 管，每一版 prompt 都跑同一份
+目前 100 筆固定職缺 ＋ 我標註的答案，存成 `dataset.jsonl` 用 git 管，每一版 prompt 都跑同一份
 
 每次跑 `eval.py` 的結果附一行到 `history.tsv`，記下 prompt / profile / dataset 的內容 hash 和 model 名稱，分數才知道能不能互相比。
-
-原本的 prompt 幾乎不會漏（recall 1.00），但判適合的有一半不適合。做法是把「LLM 判適合、
-我標不適合」的職缺撈出來歸類，把共同點寫回 rules / profile 。recall 掉一點，precision 提高不少。
-
-| 同一份考卷   | accuracy | precision | recall |
-| ------------ | -------- | --------- | ------ |
-| 改 prompt 前 | 0.62     | 0.54      | 1.00   |
-| 改 prompt 後 | 0.9      | 0.9       | 0.88   |
-
-## 幾個設計決定
-
-- **每筆職缺都存 `prompt_sha256` / `profile_sha256` / `model`。** 任何一筆都查得出是哪個版本判的，
-  也是重判時「跳過已經用當前版本判過的」的依據 —— 中途斷掉重跑不會重複花錢。
-- **便宜的過濾放前面。** search API 帶 `jobcat` + 職稱/公司黑名單 regex，減少送進 LLM 的量。
-- **JD 原始 JSON 整份存成 JSONB。** 職缺可能會下架，重判和擴充考卷都直接讀 DB。
