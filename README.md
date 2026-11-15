@@ -52,6 +52,7 @@ flowchart TB
     check -->|沒過, 退回原因| llm
     llm -->|到 20 次上限| salvage["通過檢查的項目留著<br/>其他改成查不到"]
   end
+  style mod fill:none,stroke:#888,stroke-dasharray:5 5
   check -->|通過| db[("Postgres<br/>以公司為單位存報告")]
   salvage --> db
 ```
