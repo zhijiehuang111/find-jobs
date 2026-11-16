@@ -10,7 +10,7 @@
 | `fetch_104.py` | 104 API 存取（search / detail / 公司簡介 / 重試）。沒有進入點，只被 import |
 | `judge.py` | JD 攤平成文字 + 呼叫 OpenAI 判 fit/reason。沒有進入點 |
 | `pipeline.py` | 每日主流程：列表 → 去重 → 黑名單 → 薪資 → detail → LLM → DB |
-| `run_daily.sh` | cron 呼叫，跑 3 個關鍵字的 pipeline，log 寫 `logs/` |
+| `run_daily.sh` | cron 呼叫，跑 4 個關鍵字的 pipeline，log 寫 `logs/` |
 | `rejudge.py` | 改 prompt/profile 後重判還沒標的，讀 DB 的 `raw_detail`，不打 104 |
 | `prune_closed.py` | 收件匣裡已下架的職缺刪掉 |
 | `build_dataset.py` / `eval.py` | 考卷（`labels.tsv` → `dataset.jsonl`）和評分 |
