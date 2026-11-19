@@ -88,10 +88,14 @@ def jd_to_text(detail: dict) -> str:
         ("科系要求", _join(condition["major"])),
         ("擅長工具", _join(condition["specialty"])),
         ("工作技能", _join(condition["skill"])),
-        ("其他條件", condition["other"]),
     ]
     lines = [f"{name}：{value}" for name, value in fields if value]
-    return "\n".join(lines) + f"\n\n【工作內容】\n{jd['jobDescription']}"
+    text = "\n".join(lines) + f"\n\n【JD】\n{jd['jobDescription']}"
+    # 跟 104 頁面一樣接在工作內容下面，常常是在補 requirement。不加標題：
+    # JD 內文自己常有「工作內容」小標，寫「其他條件」又容易被當成次要
+    if condition["other"]:
+        text += f"\n\n{condition['other']}"
+    return text
 
 
 def load_rules() -> str:

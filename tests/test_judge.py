@@ -34,7 +34,7 @@ def test_empty_fields_are_omitted():
     assert "職稱：後端工程師" in text
     assert "管理責任" not in text
     assert "工作技能" not in text
-    assert text.endswith("【工作內容】\n開發後端 API")
+    assert text.endswith("【JD】\n開發後端 API")
 
 
 def test_list_fields_flatten_both_shapes():
@@ -50,3 +50,15 @@ def test_shift_tags_and_delegated_recruit():
 
     assert "排班說明：需輪班、99" in text
     assert "委託招募：由人力業者代為招募（某人力）" in text
+
+
+def test_other_conditions_follow_job_description_without_heading():
+    # 104 頁面上「其他條件」接在工作內容下面，常常是在補 requirement。
+    # 不加標題：JD 內文自己常有「工作內容」小標，「其他條件」又會被當成次要
+    detail = make_detail()
+    detail["condition"]["other"] = "熟悉 Docker\n有 AWS 經驗佳"
+
+    text = jd_to_text(detail)
+
+    assert "其他條件" not in text
+    assert text.endswith("【JD】\n開發後端 API\n\n熟悉 Docker\n有 AWS 經驗佳")

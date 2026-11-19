@@ -13,7 +13,8 @@
 | `run_daily.sh` | cron 呼叫，跑 4 個關鍵字的 pipeline，log 寫 `logs/` |
 | `rejudge.py` | 改 prompt/profile 後重判還沒標的，讀 DB 的 `raw_detail`，不打 104 |
 | `prune_closed.py` | 收件匣裡已下架的職缺刪掉 |
-| `build_dataset.py` / `eval.py` | 考卷（`labels.tsv` → `dataset.jsonl`）和評分 |
+| `eval.py` | 讀考卷 `private/dataset.jsonl` 評分。考卷存 JD 快照（很多職缺已下架），手動改的只有 `label` / `reason` |
+| `render_dataset.py` | 考卷轉成 `private/dataset.md` 給人讀，一題一段，JD 是模型看到的文字。只讀、不進 git |
 | `api.py` + `queries.py` | FastAPI；SQL 全部在 `queries.py`，回傳一律 dict |
 | `company_research/` | 公司調查：`research()` 是唯一對外的 function，不 import find-jobs（ADR 0002）。沒有進入點，只被 import |
 | `research_items.py` | find-jobs 要查的調查項目和合格標準，起始日每次調查時算。`api.py` 和 `research_company.py` 共用 |
@@ -24,7 +25,7 @@
 | `migrations/` | 已上線 DB 的變更，`00N_描述.sql` |
 
 `private/` 是另一個 repo（find-jobs-private），gitignore 掉了：
-`prompts/rules.md`、`profile.md`、`filters.py`（黑名單、薪資門檻）、`labels.tsv`、`dataset.jsonl`、`evals/`。
+`prompts/rules.md`、`profile.md`、`filters.py`（黑名單、薪資門檻）、`dataset.jsonl`、`evals/`。
 CI 上沒有它，所以測試不能 import `private`。測試要用規則或門檻時，自己編一看就是假的值，不要照抄 `private/` 的真實設定（這個 repo 是公開的）。
 
 ## 常用指令
@@ -43,7 +44,7 @@ cd frontend && npm run lint && npm run build                           # 前端 
 
 - **打 OpenAI（花錢）**：`pipeline.py`、`rejudge.py`、`eval.py`、`research_company.py`
 - **打 Tavily（花錢）**：`research_company.py`
-- **打 104 API**：`pipeline.py`、`prune_closed.py`、`build_dataset.py`、`api.py` 的「調查公司」（抓公司簡介）
+- **打 104 API**：`pipeline.py`、`prune_closed.py`、`api.py` 的「調查公司」（抓公司簡介）
 - **寫 DB**：`pipeline.py`、`rejudge.py`、`prune_closed.py --apply`
 - 先看範圍再跑：`rejudge.py --dry-run`、`prune_closed.py`（不加 `--apply` 只列出）、`eval.py 10`（只跑 10 題）
 
