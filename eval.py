@@ -91,14 +91,14 @@ class Metrics:
 
 
 def read_lines(path: Path) -> list[str]:
-    """跟 build_dataset.py 同一個理由：JD 裡有 U+2028，splitlines() 會切壞 JSON。"""
+    """一定要用 split("\\n")：JD 裡有 U+2028，splitlines() 會切壞 JSON。"""
     return path.read_text(encoding="utf-8").split("\n")
 
 
 def load_dataset() -> list[Item]:
     """讀考卷，只留計分題（label 是 yes / no 的）。"""
     if not DATASET_PATH.exists():
-        sys.exit(f"找不到 {DATASET_PATH}，先跑 uv run build_dataset.py。")
+        sys.exit(f"找不到 {DATASET_PATH}，考卷在 private/ repo 裡。")
 
     items = []
     for line in filter(None, read_lines(DATASET_PATH)):
@@ -117,14 +117,14 @@ def load_dataset() -> list[Item]:
             )
         )
     if not items:
-        sys.exit(f"{DATASET_PATH} 裡沒有計分題，先在 labels.tsv 填 label。")
+        sys.exit(f"{DATASET_PATH} 裡沒有計分題，label 要填 yes 或 no。")
     return items
 
 
 def take(items: list[Item], n: int) -> list[Item]:
     """抽 n 題小子集。
 
-    考卷是照 labels.tsv 的順序排的，而我是一區一區標的（一整批 yes、一整批 no），
+    考卷是一區一區標的（一整批 yes、一整批 no），
     直接取前 n 筆會全部是同一個答案。所以平均散開來取，比例才不會歪掉。
     固定取法不隨機 —— 小子集也要能前後比較。
     """
